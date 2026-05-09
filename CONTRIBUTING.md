@@ -56,5 +56,5 @@ bash scripts/deploy.sh
 
 ## Sister Repos
 
-- **Core engine:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-core
-- **Web dashboard:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-web
+- **Core engine:** https://github.com/Tx-wat/stellar-txwatch-core
+- **Web dashboard:** https://github.com/Tx-wat/stellar-txwatch-web
