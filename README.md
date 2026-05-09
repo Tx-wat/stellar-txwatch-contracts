@@ -1,7 +1,7 @@
 # stellar-txwatch-contracts
 
 Soroban smart contracts for on-chain alert configuration storage and watcher registry.  
-Part of the [Veritas-Vaults-Network](https://github.com/Veritas-Vaults-Network) organization.
+Part of the [Tx-wat](https://github.com/Tx-wat) organization.
 
 ## Contracts
 
@@ -152,8 +152,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Sister Repos
 
-- **Core engine:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-core
-- **Web dashboard:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-web
+- **Core engine:** https://github.com/Tx-wat/stellar-txwatch-core
+- **Web dashboard:** https://github.com/Tx-wat/stellar-txwatch-web
 
 ## License
 
