@@ -437,4 +437,34 @@ mod tests {
         client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
         assert_eq!(client.get_alert_count(), 2);
     }
+
+    // 10. update_webhook changes the hash
+    #[test]
+    fn test_update_webhook() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner, &target, &str(&env, "A"), &str(&env, "old-hash"), &vec![&env],
+        );
+        client.update_webhook(&owner, &id, &str(&env, "new-hash"));
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.webhook_hash, str(&env, "new-hash"));
+    }
+
+    // 11. update_webhook unauthorized
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_update_webhook_unauthorized() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner, &target, &str(&env, "A"), &str(&env, "hash"), &vec![&env],
+        );
+        client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
+    }
 }
