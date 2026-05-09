@@ -238,4 +238,22 @@ mod tests {
         assert!(client.is_authorized(&w2));
         assert!(client.is_authorized(&w3));
     }
+
+    // 10. get_admin returns correct admin
+    #[test]
+    fn test_get_admin() {
+        let (_env, admin, client) = setup();
+        assert_eq!(client.get_admin(), admin);
+    }
+
+    // 11. old admin cannot act after transfer
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_old_admin_rejected_after_transfer() {
+        let (env, admin, client) = setup();
+        let new_admin = Address::generate(&env);
+        let watcher = Address::generate(&env);
+        client.transfer_admin(&admin, &new_admin);
+        client.register_watcher(&admin, &watcher);
+    }
 }
