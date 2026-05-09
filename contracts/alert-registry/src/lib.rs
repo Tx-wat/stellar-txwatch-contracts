@@ -137,6 +137,14 @@ impl AlertRegistry {
         Self::configs_for_ids(&env, &ids)
     }
 
+    /// Get the total number of alerts ever registered (monotonic counter).
+    pub fn get_alert_count(env: Env) -> u64 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("NEXT_ID"))
+            .unwrap_or(0u64)
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn next_id(env: &Env) -> u64 {
