@@ -103,6 +103,18 @@ Transfers the admin role to a new address.
 
 ---
 
+### `get_admin`
+
+Returns the current admin address.
+
+**Parameters:** none
+
+**Returns:** `Address`
+
+**Panics:** `"not initialized"` if the contract has not been initialized.
+
+---
+
 ## Storage
 
 All state is stored in **instance storage**:
