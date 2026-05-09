@@ -1,3 +1,160 @@
 # stellar-txwatch-contracts
 
-Soroban smart contracts for on-chain alert configuration storage and registry
+Soroban smart contracts for on-chain alert configuration storage and watcher registry.  
+Part of the [Veritas-Vaults-Network](https://github.com/Veritas-Vaults-Network) organization.
+
+## Contracts
+
+| Contract | Description |
+|---|---|
+| [Alert Registry](contracts/alert-registry/src/lib.rs) | Stores alert configs on-chain keyed by contract address |
+| [Watcher Registry](contracts/watcher-registry/src/lib.rs) | Stores authorized watcher node addresses |
+
+## Quick Start
+
+```bash
+# Install Rust + Soroban target
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+rustup target add wasm32-unknown-unknown
+
+# Build
+cargo build --release --target wasm32-unknown-unknown
+
+# Test
+cargo test
+```
+
+## Stellar Integration
+
+### Network Configuration
+
+```toml
+# Testnet
+rpc_url       = "https://soroban-testnet.stellar.org"
+passphrase    = "Test SDF Network ; September 2015"
+horizon_url   = "https://horizon-testnet.stellar.org"
+
+# Mainnet
+rpc_url       = "https://mainnet.stellar.validationcloud.io/v1/<API_KEY>"
+passphrase    = "Public Global Stellar Network ; September 2015"
+horizon_url   = "https://horizon.stellar.org"
+```
+
+### Invoking Contracts (Stellar CLI)
+
+```bash
+# Register a watcher (admin only)
+stellar contract invoke \
+  --id <WATCHER_REGISTRY_CONTRACT_ID> \
+  --source <ADMIN_IDENTITY> \
+  --network testnet \
+  -- register_watcher \
+  --admin <ADMIN_ADDRESS> \
+  --watcher <WATCHER_ADDRESS>
+
+# Register an alert config
+stellar contract invoke \
+  --id <ALERT_REGISTRY_CONTRACT_ID> \
+  --source <OWNER_IDENTITY> \
+  --network testnet \
+  -- register_alert \
+  --owner <OWNER_ADDRESS> \
+  --target_contract <WATCHED_CONTRACT_ADDRESS> \
+  --label "My Alert" \
+  --webhook_hash "<sha256-of-webhook-url>" \
+  --rules '["rule:transfer","rule:mint"]'
+
+# Query alerts for a contract
+stellar contract invoke \
+  --id <ALERT_REGISTRY_CONTRACT_ID> \
+  --network testnet \
+  -- get_alerts_for_contract \
+  --target_contract <WATCHED_CONTRACT_ADDRESS>
+```
+
+### Invoking Contracts (JavaScript SDK)
+
+```js
+import { Contract, SorobanRpc, TransactionBuilder, Networks, BASE_FEE } from "@stellar/stellar-sdk";
+
+const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
+const contract = new Contract("<ALERT_REGISTRY_CONTRACT_ID>");
+
+// Build a register_alert transaction
+const account = await server.getAccount(ownerKeypair.publicKey());
+const tx = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "register_alert",
+      // args built with xdr helpers — see stellar-sdk docs
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const preparedTx = await server.prepareTransaction(tx);
+preparedTx.sign(ownerKeypair);
+const result = await server.sendTransaction(preparedTx);
+```
+
+### Invoking Contracts (Rust SDK)
+
+```rust
+use soroban_sdk::{Address, Env, String, Vec};
+
+// In a cross-contract call context:
+let alert_registry = AlertRegistryClient::new(&env, &alert_registry_id);
+let config_id = alert_registry.register_alert(
+    &owner,
+    &target_contract,
+    &String::from_str(&env, "My Alert"),
+    &String::from_str(&env, "<webhook-hash>"),
+    &rules,
+);
+```
+
+### Auth Flow
+
+All mutating functions require Stellar auth signatures:
+
+```
+Owner signs → register_alert / update_alert / remove_alert
+Admin signs → register_watcher / remove_watcher / transfer_admin
+```
+
+Stellar's `require_auth()` enforces this at the protocol level — no custom signature verification needed.
+
+### Event Indexing (planned)
+
+Contracts emit no custom events yet. Watchers poll via Horizon's transaction endpoint:
+
+```
+GET https://horizon-testnet.stellar.org/accounts/<CONTRACT_ID>/transactions
+```
+
+Future versions will emit `soroban_sdk::events` for real-time indexing.
+
+## Deployed Addresses
+
+See [DEPLOYMENTS.md](DEPLOYMENTS.md).
+
+## Docs
+
+- [Alert Registry function reference](docs/alert-registry.md)
+- [Watcher Registry function reference](docs/watcher-registry.md)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Sister Repos
+
+- **Core engine:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-core
+- **Web dashboard:** https://github.com/Veritas-Vaults-Network/stellar-txwatch-web
+
+## License
+
+MIT
