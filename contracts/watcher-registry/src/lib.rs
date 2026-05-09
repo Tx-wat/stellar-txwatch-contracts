@@ -90,6 +90,14 @@ impl WatcherRegistry {
             .set(&symbol_short!("ADMIN"), &new_admin);
     }
 
+    /// Get the current admin address.
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ADMIN"))
+            .expect("not initialized")
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     fn load_watchers(env: &Env) -> Vec<Address> {
