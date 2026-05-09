@@ -98,6 +98,29 @@ impl AlertRegistry {
         env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
     }
 
+    /// Update the webhook hash for an existing alert (owner only).
+    pub fn update_webhook(env: Env, caller: Address, config_id: u64, webhook_hash: String) {
+        caller.require_auth();
+
+        let mut config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .expect("alert not found");
+
+        if config.owner != caller {
+            panic!("unauthorized");
+        }
+
+        config.webhook_hash = webhook_hash;
+        config.updated_at = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Alert(config_id), &config);
+        env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+    }
+
     /// Remove an alert config (owner only).
     pub fn remove_alert(env: Env, caller: Address, config_id: u64) {
         caller.require_auth();
