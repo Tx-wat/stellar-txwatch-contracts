@@ -125,6 +125,36 @@ Returns all alert configs owned by a given address.
 
 ---
 
+### `update_webhook`
+
+Updates the webhook hash for an existing alert. Use this to rotate webhook URLs without re-registering. Only the original owner may call this.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | ID of the alert to update |
+| `webhook_hash` | `String` | New hashed webhook URL |
+
+**Returns:** nothing
+
+**Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
+
+---
+
+### `get_alert_count`
+
+Returns the total number of alerts ever registered (monotonic counter — does not decrease on removal).
+
+**Parameters:** none
+
+**Returns:** `u64`
+
+---
+
 ## Storage
 
 - Alert configs are stored in **persistent storage** under `DataKey::Alert(id)`.
