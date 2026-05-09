@@ -171,6 +171,7 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::OwnerIndex(owner.clone()), &ids);
+        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
     }
 
     fn push_contract_index(env: &Env, target: &Address, id: u64) {
@@ -179,6 +180,7 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::ContractIndex(target.clone()), &ids);
+        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
     }
 
     fn remove_from_owner_index(env: &Env, owner: &Address, id: u64) {
