@@ -400,4 +400,18 @@ mod tests {
         assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
         assert_eq!(client.get_alerts_by_owner(&owner).len(), 2);
     }
+
+    // 9. get_alert_count reflects registered alerts
+    #[test]
+    fn test_get_alert_count() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        assert_eq!(client.get_alert_count(), 0);
+        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_alert_count(), 1);
+        client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_alert_count(), 2);
+    }
 }
