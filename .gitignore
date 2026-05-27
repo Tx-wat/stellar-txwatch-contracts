@@ -1,3 +1,22 @@
 target/
 Cargo.lock
 **/test_snapshots/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.DS_Store
+
+# Generated ABI output (local runs)
+abi/
+
+# Stellar CLI local config
+.stellar/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
