@@ -21,6 +21,21 @@ Contract that stores alert configurations on-chain, keyed by contract address.
 
 ---
 
+## Rule descriptor format
+
+The `rules` field is a `Vec<String>` containing serialized rule descriptors. Each descriptor is a single string in the format `rule:<prefix>`, where `<prefix>` denotes the event or condition to watch for.
+
+### Valid rule prefixes
+
+| Prefix | Semantics |
+|---|---|
+| `rule:transfer` | Alert when the target contract emits a transfer-like action. |
+| `rule:mint` | Alert when the target contract performs a mint or issuance event. |
+
+The alert registry stores these descriptors verbatim and does not validate or execute rule semantics on-chain. Off-chain watcher logic interprets prefixes and applies the corresponding alert behavior.
+
+---
+
 ## Functions
 
 ### `register_alert`
