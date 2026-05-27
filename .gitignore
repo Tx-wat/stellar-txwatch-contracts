@@ -1,3 +1,24 @@
+# Build output
 target/
+
+# Cargo lock (library crates; keep for binaries if needed)
 Cargo.lock
+
+# Soroban test snapshots
 **/test_snapshots/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+
+# Compiled WASM artifacts (generated, not source)
+*.wasm
