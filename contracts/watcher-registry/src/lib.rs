@@ -5,7 +5,7 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, vec, Addre
 
 #[contracttype]
 pub enum DataKey {
-    Admin,
+    Admins,
     Watchers,
 }
 
@@ -18,16 +18,13 @@ pub struct WatcherRegistry;
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
     pub fn initialize(env: Env, admin: Address) {
-        if env
-            .storage()
-            .instance()
-            .has(&symbol_short!("ADMIN"))
-        {
+        if env.storage().instance().has(&symbol_short!("ADMINS")) {
             panic!("already initialized");
         }
+        let admins: Vec<Address> = vec![&env, admin];
         env.storage()
             .instance()
-            .set(&symbol_short!("ADMIN"), &admin);
+            .set(&symbol_short!("ADMINS"), &admins);
     }
 
     /// Register an authorized watcher node (admin only).
@@ -85,17 +82,20 @@ impl WatcherRegistry {
     pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
-        env.storage()
-            .instance()
-            .set(&symbol_short!("ADMIN"), &new_admin);
+        // Transfer replaces the admin set with a single new admin
+        let admins: Vec<Address> = vec![&env, new_admin];
+        env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
     }
 
     /// Get the current admin address.
     pub fn get_admin(env: Env) -> Address {
-        env.storage()
+        // For compatibility return the first admin
+        let admins: Vec<Address> = env
+            .storage()
             .instance()
-            .get(&symbol_short!("ADMIN"))
-            .expect("not initialized")
+            .get(&symbol_short!("ADMINS"))
+            .expect("not initialized");
+        admins.get(0).unwrap()
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -107,15 +107,21 @@ impl WatcherRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
-    fn assert_admin(env: &Env, caller: &Address) {
-        let admin: Address = env
-            .storage()
+    fn load_admins(env: &Env) -> Vec<Address> {
+        env.storage()
             .instance()
-            .get(&symbol_short!("ADMIN"))
-            .expect("not initialized");
-        if admin != *caller {
-            panic!("unauthorized");
+            .get(&symbol_short!("ADMINS"))
+            .unwrap_or_else(|| vec![env])
+    }
+
+    fn assert_admin(env: &Env, caller: &Address) {
+        let admins = Self::load_admins(env);
+        for i in 0..admins.len() {
+            if admins.get(i).unwrap() == *caller {
+                return;
+            }
         }
+        panic!("unauthorized");
     }
 }
 
