@@ -134,9 +134,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         if rules.len() > 50 {
             panic!("too many rules: maximum is 50");
@@ -170,9 +168,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -203,9 +199,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         env.storage()
             .persistent()
