@@ -162,6 +162,17 @@ mod tests {
         assert!(client.is_authorized(&watcher));
     }
 
+    #[test]
+    #[should_panic]
+    fn test_initialize_requires_admin_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize(&admin);
+    }
+
     // 2. Happy path — remove watcher
     #[test]
     fn test_remove_watcher() {
