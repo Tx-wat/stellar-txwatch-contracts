@@ -145,6 +145,38 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 
 ---
 
+### `get_contract_alerts_paginated`
+
+Returns a page of alert configs registered for a given target contract.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `target_contract` | `Address` | Contract address to query |
+| `offset` | `u32` | Number of results to skip |
+| `limit` | `u32` | Maximum number of results to return |
+
+**Returns:** `Vec<AlertConfig>` — may be empty.
+
+---
+
+### `get_alerts_by_owner_paginated`
+
+Returns a page of alert configs owned by a given address.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `owner` | `Address` | Owner address to query |
+| `offset` | `u32` | Number of results to skip |
+| `limit` | `u32` | Maximum number of results to return |
+
+**Returns:** `Vec<AlertConfig>` — may be empty.
+
+---
+
 ### `get_alert_count`
 
 Returns the total number of alerts ever registered (monotonic counter — does not decrease on removal).

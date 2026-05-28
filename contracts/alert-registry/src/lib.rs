@@ -46,6 +46,10 @@ impl AlertRegistry {
     ) -> u64 {
         owner.require_auth();
 
+        if label.len() > 128 {
+            panic!("label exceeds 128 bytes");
+        }
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -160,6 +164,28 @@ impl AlertRegistry {
         Self::configs_for_ids(&env, &ids)
     }
 
+    /// Get a page of alert configs for a target contract (offset + limit).
+    pub fn get_contract_alerts_paginated(
+        env: Env,
+        target_contract: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::contract_index(&env, &target_contract);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
+    /// Get a page of alert configs owned by an address (offset + limit).
+    pub fn get_alerts_by_owner_paginated(
+        env: Env,
+        owner: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::owner_index(&env, &owner);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
     /// Get the total number of alerts ever registered (monotonic counter).
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
@@ -247,6 +273,20 @@ impl AlertRegistry {
     fn configs_for_ids(env: &Env, ids: &Vec<u64>) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
+                out.push_back(cfg);
+            }
+        }
+        out
+    }
+
+    fn configs_paginated(env: &Env, ids: &Vec<u64>, offset: u32, limit: u32) -> Vec<AlertConfig> {
+        let mut out: Vec<AlertConfig> = vec![env];
+        let len = ids.len();
+        let start = offset.min(len);
+        let end = (offset + limit).min(len);
+        for i in start..end {
             let id = ids.get(i).unwrap();
             if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
                 out.push_back(cfg);
@@ -466,5 +506,26 @@ mod tests {
             &owner, &target, &str(&env, "A"), &str(&env, "hash"), &vec![&env],
         );
         client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
+    }
+
+    // 12. Label exceeding 128 bytes is rejected
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let long_label = str(&env, &"a".repeat(129));
+        client.register_alert(&owner, &target, &long_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 13. Label at exactly 128 bytes is accepted
+    #[test]
+    fn test_label_max_length_accepted() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let max_label = str(&env, &"a".repeat(128));
+        client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
 }
