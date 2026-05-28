@@ -5,11 +5,16 @@ use soroban_sdk::{
 
 // ── Storage keys ────────────────────────────────────────────────────────────
 
+/// Storage key variants used to address persistent and instance entries.
 #[contracttype]
 pub enum DataKey {
+    /// Stores an [`AlertConfig`] keyed by its numeric ID.
     Alert(u64),
+    /// Stores the list of alert IDs owned by a given address.
     OwnerIndex(Address),
+    /// Stores the list of alert IDs watching a given contract address.
     ContractIndex(Address),
+    /// Monotonic counter used to generate unique alert IDs.
     NextId,
 }
 #[contracterror]
@@ -21,27 +26,60 @@ pub enum ContractError {
 }
 // ── Data types ───────────────────────────────────────────────────────────────
 
+/// On-chain configuration for a single alert.
+///
+/// Stored under [`DataKey::Alert`] with a TTL of 100 ledgers (~8 minutes).
+/// See `docs/ttl.md` for expiry details and how to extend the TTL.
 #[contracttype]
 #[derive(Clone)]
 pub struct AlertConfig {
+    /// Human-readable label for the alert.
     pub label: String,
+    /// SHA-256 hash of the webhook URL (the raw URL is never stored on-chain).
     pub webhook_hash: String,
+    /// List of rule identifiers that trigger this alert (e.g. `"rule:transfer"`).
     pub rules: Vec<String>,
+    /// Address that owns and may mutate this alert.
     pub owner: Address,
+    /// Contract address being watched.
     pub target_contract: Address,
+    /// Ledger timestamp at the time of registration.
     pub created_at: u64,
+    /// Ledger timestamp of the most recent update.
     pub updated_at: u64,
+    /// Whether the alert is currently active.
     pub active: bool,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
+/// On-chain registry for alert configurations.
+///
+/// Each alert is keyed by a monotonically increasing `u64` ID and indexed by
+/// both owner address and target contract address for efficient lookups.
+///
+/// # Storage and TTL
+/// All persistent entries are extended by 100 ledgers (~8 minutes) on every
+/// write. See `docs/ttl.md` for implications and how to tune this value.
 #[contract]
 pub struct AlertRegistry;
 
 #[contractimpl]
 impl AlertRegistry {
-    /// Register a new alert config. Returns the new config ID.
+    /// Register a new alert config and return its assigned ID.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `owner`.
+    ///
+    /// # Arguments
+    /// * `owner` - Address that will own and control this alert.
+    /// * `target_contract` - Contract address to watch.
+    /// * `label` - Human-readable name for the alert.
+    /// * `webhook_hash` - SHA-256 hash of the destination webhook URL.
+    /// * `rules` - Rule identifiers that should trigger the alert.
+    ///
+    /// # Returns
+    /// The new alert's numeric ID.
     pub fn register_alert(
         env: Env,
         owner: Address,
@@ -51,6 +89,10 @@ impl AlertRegistry {
         rules: Vec<String>,
     ) -> u64 {
         owner.require_auth();
+
+        if label.len() > 128 {
+            panic!("label exceeds 128 bytes");
+        }
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
@@ -74,7 +116,15 @@ impl AlertRegistry {
         id
     }
 
-    /// Update rules and active flag of an existing alert (owner only).
+    /// Update the rules and active flag of an existing alert.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Panics
+    /// Panics with `"alert not found"` if `config_id` does not exist.
+    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
     pub fn update_alert(
         env: Env,
         caller: Address,
@@ -92,6 +142,10 @@ impl AlertRegistry {
 
         Self::assert_owner(&config, &caller)?;
 
+        if rules.len() > 50 {
+            panic!("too many rules: maximum is 50");
+        }
+
         config.rules = rules;
         config.active = active;
         config.updated_at = env.ledger().timestamp();
@@ -103,13 +157,16 @@ impl AlertRegistry {
         Ok(())
     }
 
-    /// Update the webhook hash for an existing alert (owner only).
-    pub fn update_webhook(
-        env: Env,
-        caller: Address,
-        config_id: u64,
-        webhook_hash: String,
-    ) -> Result<(), ContractError> {
+    /// Update the webhook hash for an existing alert.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Panics
+    /// Panics with `"alert not found"` if `config_id` does not exist.
+    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    pub fn update_webhook(env: Env, caller: Address, config_id: u64, webhook_hash: String) {
         caller.require_auth();
 
         let mut config: AlertConfig = env
@@ -130,8 +187,18 @@ impl AlertRegistry {
         Ok(())
     }
 
-    /// Remove an alert config (owner only).
-    pub fn remove_alert(env: Env, caller: Address, config_id: u64) -> Result<(), ContractError> {
+    /// Remove an alert config from storage.
+    ///
+    /// Also removes the alert ID from the owner and contract indexes.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Panics
+    /// Panics with `"alert not found"` if `config_id` does not exist.
+    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    pub fn remove_alert(env: Env, caller: Address, config_id: u64) {
         caller.require_auth();
 
         let config: AlertConfig = env
@@ -151,24 +218,53 @@ impl AlertRegistry {
         Ok(())
     }
 
-    /// Get a specific alert config by ID.
+    /// Retrieve a single alert config by its ID.
+    ///
+    /// Returns `None` if the alert does not exist or has expired.
     pub fn get_alert(env: Env, config_id: u64) -> Option<AlertConfig> {
         env.storage().persistent().get(&DataKey::Alert(config_id))
     }
 
-    /// Get all alert configs for a target contract address.
+    /// Retrieve all alert configs that watch a given contract address.
+    ///
+    /// Returns an empty vec if no alerts are registered for `target_contract`.
     pub fn get_alerts_for_contract(env: Env, target_contract: Address) -> Vec<AlertConfig> {
         let ids = Self::contract_index(&env, &target_contract);
         Self::configs_for_ids(&env, &ids)
     }
 
-    /// Get all alert configs owned by an address.
+    /// Retrieve all alert configs owned by a given address.
+    ///
+    /// Returns an empty vec if `owner` has no registered alerts.
     pub fn get_alerts_by_owner(env: Env, owner: Address) -> Vec<AlertConfig> {
         let ids = Self::owner_index(&env, &owner);
         Self::configs_for_ids(&env, &ids)
     }
 
+    /// Get a page of alert configs for a target contract (offset + limit).
+    pub fn get_contract_alerts_paginated(
+        env: Env,
+        target_contract: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::contract_index(&env, &target_contract);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
+    /// Get a page of alert configs owned by an address (offset + limit).
+    pub fn get_alerts_by_owner_paginated(
+        env: Env,
+        owner: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::owner_index(&env, &owner);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
     /// Get the total number of alerts ever registered (monotonic counter).
+    #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
             .instance()
@@ -178,6 +274,9 @@ impl AlertRegistry {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
+    /// Atomically read and increment the global alert ID counter.
+    ///
+    /// Returns the current value before incrementing, so the first ID is `0`.
     fn next_id(env: &Env) -> u64 {
         let id: u64 = env
             .storage()
@@ -190,13 +289,7 @@ impl AlertRegistry {
         id
     }
 
-    fn assert_owner(config: &AlertConfig, caller: &Address) -> Result<(), ContractError> {
-        if config.owner != *caller {
-            return Err(ContractError::Unauthorized);
-        }
-        Ok(())
-    }
-
+    /// Load the list of alert IDs owned by `owner`, or an empty vec.
     fn owner_index(env: &Env, owner: &Address) -> Vec<u64> {
         env.storage()
             .persistent()
@@ -204,6 +297,7 @@ impl AlertRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
+    /// Load the list of alert IDs watching `target`, or an empty vec.
     fn contract_index(env: &Env, target: &Address) -> Vec<u64> {
         env.storage()
             .persistent()
@@ -211,6 +305,7 @@ impl AlertRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
+    /// Append `id` to the owner's index and persist it with a refreshed TTL.
     fn push_owner_index(env: &Env, owner: &Address, id: u64) {
         let mut ids = Self::owner_index(env, owner);
         ids.push_back(id);
@@ -220,6 +315,7 @@ impl AlertRegistry {
         env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
     }
 
+    /// Append `id` to the contract's index and persist it with a refreshed TTL.
     fn push_contract_index(env: &Env, target: &Address, id: u64) {
         let mut ids = Self::contract_index(env, target);
         ids.push_back(id);
@@ -229,6 +325,10 @@ impl AlertRegistry {
         env.storage().persistent().extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
     }
 
+    /// Remove `id` from the owner's index and persist the updated list.
+    ///
+    /// Rebuilds the index by copying all IDs except `id`. The TTL is refreshed
+    /// on the updated entry.
     fn remove_from_owner_index(env: &Env, owner: &Address, id: u64) {
         let ids = Self::owner_index(env, owner);
         let mut updated: Vec<u64> = vec![env];
@@ -244,6 +344,10 @@ impl AlertRegistry {
         env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
     }
 
+    /// Remove `id` from the contract's index and persist the updated list.
+    ///
+    /// Rebuilds the index by copying all IDs except `id`. The TTL is refreshed
+    /// on the updated entry.
     fn remove_from_contract_index(env: &Env, target: &Address, id: u64) {
         let ids = Self::contract_index(env, target);
         let mut updated: Vec<u64> = vec![env];
@@ -259,9 +363,27 @@ impl AlertRegistry {
         env.storage().persistent().extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
     }
 
+    /// Resolve a list of alert IDs to their stored [`AlertConfig`] values.
+    ///
+    /// IDs that no longer exist in storage (expired or removed) are silently
+    /// skipped.
     fn configs_for_ids(env: &Env, ids: &Vec<u64>) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
+                out.push_back(cfg);
+            }
+        }
+        out
+    }
+
+    fn configs_paginated(env: &Env, ids: &Vec<u64>, offset: u32, limit: u32) -> Vec<AlertConfig> {
+        let mut out: Vec<AlertConfig> = vec![env];
+        let len = ids.len();
+        let start = offset.min(len);
+        let end = (offset + limit).min(len);
+        for i in start..end {
             let id = ids.get(i).unwrap();
             if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
                 out.push_back(cfg);
@@ -506,5 +628,98 @@ mod tests {
             ),
             Err(ContractError::AlertNotFound)
         );
+    }
+
+
+    // 12. Issue #65 — active defaults to true on registration
+    #[test]
+    fn test_active_defaults_to_true() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.active, true);
+    }
+
+    // 13. Issue #115 — register_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_register_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+    }
+
+    // 14. Issue #115 — update_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_update_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env],
+        );
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.update_alert(&owner, &id, &rules, &true);
+    }
+
+    // 15. Issue #115 — exactly 50 rules is accepted
+    #[test]
+    fn test_register_alert_exactly_50_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for _i in 0..50u32 {
+            rules.push_back(str(&env, "rule"));
+        }
+        let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.rules.len(), 50);
+
+    // 12. Label exceeding 128 bytes is rejected
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let long_label = str(&env, &"a".repeat(129));
+        client.register_alert(&owner, &target, &long_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 13. Label at exactly 128 bytes is accepted
+    #[test]
+    fn test_label_max_length_accepted() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let max_label = str(&env, &"a".repeat(128));
+        client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+
     }
 }
