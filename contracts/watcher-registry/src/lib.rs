@@ -1,14 +1,20 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, vec, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Vec};
+
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContractError {
+    AlreadyInitialized = 1,
+}
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
 /// Storage key variants used to address instance entries.
 #[contracttype]
 pub enum DataKey {
-    /// Stores the current admin [`Address`].
-    Admin,
-    /// Stores the list of authorized watcher [`Address`] values.
+    Admins,
     Watchers,
 }
 
@@ -20,17 +26,15 @@ pub struct WatcherRegistry;
 #[contractimpl]
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
-    pub fn initialize(env: Env, admin: Address) {
-        if env
-            .storage()
-            .instance()
-            .has(&symbol_short!("ADMIN"))
-        {
-            panic!("already initialized");
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        if env.storage().instance().has(&symbol_short!("ADMIN")) {
+            return Err(ContractError::AlreadyInitialized);
         }
+        let admins: Vec<Address> = vec![&env, admin];
         env.storage()
             .instance()
             .set(&symbol_short!("ADMIN"), &admin);
+        Ok(())
     }
 
     /// Register an authorized watcher node (admin only).
@@ -88,17 +92,20 @@ impl WatcherRegistry {
     pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
         admin.require_auth();
         Self::assert_admin(&env, &admin);
-        env.storage()
-            .instance()
-            .set(&symbol_short!("ADMIN"), &new_admin);
+        // Transfer replaces the admin set with a single new admin
+        let admins: Vec<Address> = vec![&env, new_admin];
+        env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
     }
 
     /// Get the current admin address.
     pub fn get_admin(env: Env) -> Address {
-        env.storage()
+        // For compatibility return the first admin
+        let admins: Vec<Address> = env
+            .storage()
             .instance()
-            .get(&symbol_short!("ADMIN"))
-            .expect("not initialized")
+            .get(&symbol_short!("ADMINS"))
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        admins.get(0).unwrap()
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -111,20 +118,21 @@ impl WatcherRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
-    /// Assert that `caller` is the current admin.
-    ///
-    /// # Panics
-    /// Panics with `"not initialized"` if the registry has not been initialized.
-    /// Panics with `"unauthorized"` if `caller` is not the admin.
-    fn assert_admin(env: &Env, caller: &Address) {
-        let admin: Address = env
-            .storage()
+    fn load_admins(env: &Env) -> Vec<Address> {
+        env.storage()
             .instance()
-            .get(&symbol_short!("ADMIN"))
-            .expect("not initialized");
-        if admin != *caller {
-            panic!("unauthorized");
+            .get(&symbol_short!("ADMINS"))
+            .unwrap_or_else(|| vec![env])
+    }
+
+    fn assert_admin(env: &Env, caller: &Address) {
+        let admins = Self::load_admins(env);
+        for i in 0..admins.len() {
+            if admins.get(i).unwrap() == *caller {
+                return;
+            }
         }
+        panic!("unauthorized");
     }
 }
 
@@ -203,13 +211,13 @@ mod tests {
         client.remove_watcher(&attacker, &watcher);
     }
 
-    // 6. Edge case — double initialize panics
+    // 6. Edge case — double initialize returns AlreadyInitialized error
     #[test]
-    #[should_panic(expected = "already initialized")]
     fn test_double_initialize() {
         let (env, _admin, client) = setup();
         let other = Address::generate(&env);
-        client.initialize(&other);
+        let err = client.try_initialize(&other).unwrap_err().unwrap();
+        assert_eq!(err, ContractError::AlreadyInitialized);
     }
 
     // 7. Edge case — get_watchers returns empty before any registration
@@ -255,7 +263,18 @@ mod tests {
         assert_eq!(client.get_admin(), admin);
     }
 
-    // 11. old admin cannot act after transfer
+    // 11. get_admin panics with NotInitialized when contract is not initialized
+    #[test]
+    #[should_panic]
+    fn test_get_admin_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        client.get_admin();
+    }
+
+    // 12. old admin cannot act after transfer
     #[test]
     #[should_panic(expected = "unauthorized")]
     fn test_old_admin_rejected_after_transfer() {
