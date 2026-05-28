@@ -46,6 +46,10 @@ impl AlertRegistry {
     ) -> u64 {
         owner.require_auth();
 
+        if rules.len() > 50 {
+            panic!("too many rules: maximum is 50");
+        }
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -86,6 +90,10 @@ impl AlertRegistry {
 
         if config.owner != caller {
             panic!("unauthorized");
+        }
+
+        if rules.len() > 50 {
+            panic!("too many rules: maximum is 50");
         }
 
         config.rules = rules;
@@ -144,23 +152,27 @@ impl AlertRegistry {
     }
 
     /// Get a specific alert config by ID.
+    #[must_use]
     pub fn get_alert(env: Env, config_id: u64) -> Option<AlertConfig> {
         env.storage().persistent().get(&DataKey::Alert(config_id))
     }
 
     /// Get all alert configs for a target contract address.
+    #[must_use]
     pub fn get_alerts_for_contract(env: Env, target_contract: Address) -> Vec<AlertConfig> {
         let ids = Self::contract_index(&env, &target_contract);
         Self::configs_for_ids(&env, &ids)
     }
 
     /// Get all alert configs owned by an address.
+    #[must_use]
     pub fn get_alerts_by_owner(env: Env, owner: Address) -> Vec<AlertConfig> {
         let ids = Self::owner_index(&env, &owner);
         Self::configs_for_ids(&env, &ids)
     }
 
     /// Get the total number of alerts ever registered (monotonic counter).
+    #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
             .instance()
@@ -466,5 +478,76 @@ mod tests {
             &owner, &target, &str(&env, "A"), &str(&env, "hash"), &vec![&env],
         );
         client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
+    }
+
+    // 12. Issue #65 — active defaults to true on registration
+    #[test]
+    fn test_active_defaults_to_true() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.active, true);
+    }
+
+    // 13. Issue #115 — register_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_register_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+    }
+
+    // 14. Issue #115 — update_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_update_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env],
+        );
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.update_alert(&owner, &id, &rules, &true);
+    }
+
+    // 15. Issue #115 — exactly 50 rules is accepted
+    #[test]
+    fn test_register_alert_exactly_50_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for _i in 0..50u32 {
+            rules.push_back(str(&env, "rule"));
+        }
+        let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.rules.len(), 50);
     }
 }

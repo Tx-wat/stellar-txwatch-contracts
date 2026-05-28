@@ -1,3 +1,19 @@
 target/
 Cargo.lock
 **/test_snapshots/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Soroban / Stellar CLI artifacts
+.soroban/
+*.wasm
