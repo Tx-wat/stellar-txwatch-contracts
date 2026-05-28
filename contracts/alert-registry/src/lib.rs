@@ -164,6 +164,28 @@ impl AlertRegistry {
         Self::configs_for_ids(&env, &ids)
     }
 
+    /// Get a page of alert configs for a target contract (offset + limit).
+    pub fn get_contract_alerts_paginated(
+        env: Env,
+        target_contract: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::contract_index(&env, &target_contract);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
+    /// Get a page of alert configs owned by an address (offset + limit).
+    pub fn get_alerts_by_owner_paginated(
+        env: Env,
+        owner: Address,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
+        let ids = Self::owner_index(&env, &owner);
+        Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
     /// Get the total number of alerts ever registered (monotonic counter).
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
@@ -251,6 +273,20 @@ impl AlertRegistry {
     fn configs_for_ids(env: &Env, ids: &Vec<u64>) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
+                out.push_back(cfg);
+            }
+        }
+        out
+    }
+
+    fn configs_paginated(env: &Env, ids: &Vec<u64>, offset: u32, limit: u32) -> Vec<AlertConfig> {
+        let mut out: Vec<AlertConfig> = vec![env];
+        let len = ids.len();
+        let start = offset.min(len);
+        let end = (offset + limit).min(len);
+        for i in start..end {
             let id = ids.get(i).unwrap();
             if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
                 out.push_back(cfg);
