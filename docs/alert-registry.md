@@ -21,6 +21,21 @@ Contract that stores alert configurations on-chain, keyed by contract address.
 
 ---
 
+## Rule descriptor format
+
+The `rules` field is a `Vec<String>` containing serialized rule descriptors. Each descriptor is a single string in the format `rule:<prefix>`, where `<prefix>` denotes the event or condition to watch for.
+
+### Valid rule prefixes
+
+| Prefix | Semantics |
+|---|---|
+| `rule:transfer` | Alert when the target contract emits a transfer-like action. |
+| `rule:mint` | Alert when the target contract performs a mint or issuance event. |
+
+The alert registry stores these descriptors verbatim and does not validate or execute rule semantics on-chain. Off-chain watcher logic interprets prefixes and applies the corresponding alert behavior.
+
+---
+
 ## Functions
 
 ### `register_alert`
@@ -142,6 +157,38 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 **Returns:** nothing
 
 **Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
+
+---
+
+### `get_contract_alerts_paginated`
+
+Returns a page of alert configs registered for a given target contract.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `target_contract` | `Address` | Contract address to query |
+| `offset` | `u32` | Number of results to skip |
+| `limit` | `u32` | Maximum number of results to return |
+
+**Returns:** `Vec<AlertConfig>` — may be empty.
+
+---
+
+### `get_alerts_by_owner_paginated`
+
+Returns a page of alert configs owned by a given address.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `owner` | `Address` | Owner address to query |
+| `offset` | `u32` | Number of results to skip |
+| `limit` | `u32` | Maximum number of results to return |
+
+**Returns:** `Vec<AlertConfig>` — may be empty.
 
 ---
 
