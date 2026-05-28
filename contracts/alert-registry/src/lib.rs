@@ -84,9 +84,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         config.rules = rules;
         config.active = active;
@@ -108,9 +106,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -131,9 +127,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .expect("alert not found");
 
-        if config.owner != caller {
-            panic!("unauthorized");
-        }
+        Self::assert_owner(&config, &caller);
 
         env.storage()
             .persistent()
@@ -180,6 +174,12 @@ impl AlertRegistry {
             .instance()
             .set(&symbol_short!("NEXT_ID"), &(id + 1));
         id
+    }
+
+    fn assert_owner(config: &AlertConfig, caller: &Address) {
+        if config.owner != *caller {
+            panic!("unauthorized");
+        }
     }
 
     fn owner_index(env: &Env, owner: &Address) -> Vec<u64> {
