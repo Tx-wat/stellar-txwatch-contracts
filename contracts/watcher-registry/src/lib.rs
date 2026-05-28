@@ -11,6 +11,7 @@ pub enum ContractError {
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
+/// Storage key variants used to address instance entries.
 #[contracttype]
 pub enum DataKey {
     Admins,
@@ -109,6 +110,7 @@ impl WatcherRegistry {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
+    /// Load the current watcher list from instance storage, or return an empty vec.
     fn load_watchers(env: &Env) -> Vec<Address> {
         env.storage()
             .instance()
