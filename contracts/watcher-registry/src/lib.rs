@@ -252,6 +252,19 @@ mod tests {
         assert_eq!(client.get_watchers().len(), 1);
     }
 
+    // 8b. Edge case — repeated calls with the same watcher stay idempotent
+    #[test]
+    fn test_register_idempotent_after_five_duplicates() {
+        let (env, admin, client) = setup();
+        let watcher = Address::generate(&env);
+
+        for _ in 0..5 {
+            client.register_watcher(&admin, &watcher);
+        }
+
+        assert_eq!(client.get_watchers().len(), 1);
+    }
+
     // 9. Multiple watchers
     #[test]
     fn test_multiple_watchers() {
