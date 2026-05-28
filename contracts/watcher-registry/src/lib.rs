@@ -18,11 +18,8 @@ pub struct WatcherRegistry;
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
     pub fn initialize(env: Env, admin: Address) {
-        if env
-            .storage()
-            .instance()
-            .has(&symbol_short!("ADMIN"))
-        {
+        admin.require_auth();
+        if env.storage().instance().has(&symbol_short!("ADMIN")) {
             panic!("already initialized");
         }
         env.storage()
@@ -145,6 +142,17 @@ mod tests {
         assert!(!client.is_authorized(&watcher));
         client.register_watcher(&admin, &watcher);
         assert!(client.is_authorized(&watcher));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_initialize_requires_admin_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+
+        client.initialize(&admin);
     }
 
     // 2. Happy path — remove watcher
