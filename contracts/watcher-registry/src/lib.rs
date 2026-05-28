@@ -3,9 +3,12 @@ use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, vec, Addre
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
+/// Storage key variants used to address instance entries.
 #[contracttype]
 pub enum DataKey {
+    /// Stores the current admin [`Address`].
     Admin,
+    /// Stores the list of authorized watcher [`Address`] values.
     Watchers,
 }
 
@@ -100,6 +103,7 @@ impl WatcherRegistry {
 
     // ── Internal helpers ─────────────────────────────────────────────────────
 
+    /// Load the current watcher list from instance storage, or return an empty vec.
     fn load_watchers(env: &Env) -> Vec<Address> {
         env.storage()
             .instance()
@@ -107,6 +111,11 @@ impl WatcherRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
+    /// Assert that `caller` is the current admin.
+    ///
+    /// # Panics
+    /// Panics with `"not initialized"` if the registry has not been initialized.
+    /// Panics with `"unauthorized"` if `caller` is not the admin.
     fn assert_admin(env: &Env, caller: &Address) {
         let admin: Address = env
             .storage()

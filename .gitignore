@@ -1,3 +1,26 @@
+# Build artifacts
 target/
+*.wasm
+
+# Cargo lock (library crates; remove this line if you want to pin deps)
 Cargo.lock
+
+# Soroban test snapshots
 **/test_snapshots/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+*.pem
+*.key
+
+# Stellar CLI
+.stellar/
