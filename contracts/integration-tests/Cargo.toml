@@ -1,0 +1,9 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+soroban-sdk = { workspace = true, features = ["testutils"] }
+alert-registry = { path = "../alert-registry", features = ["testutils"] }
+watcher-registry = { path = "../watcher-registry", features = ["testutils"] }

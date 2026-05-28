@@ -1,5 +1,13 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, vec, Address, Env, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Vec};
+
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContractError {
+    AlreadyInitialized = 1,
+}
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -17,14 +25,15 @@ pub struct WatcherRegistry;
 #[contractimpl]
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
-    pub fn initialize(env: Env, admin: Address) {
-        if env.storage().instance().has(&symbol_short!("ADMINS")) {
-            panic!("already initialized");
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        if env.storage().instance().has(&symbol_short!("ADMIN")) {
+            return Err(ContractError::AlreadyInitialized);
         }
         let admins: Vec<Address> = vec![&env, admin];
         env.storage()
             .instance()
-            .set(&symbol_short!("ADMINS"), &admins);
+            .set(&symbol_short!("ADMIN"), &admin);
+        Ok(())
     }
 
     /// Register an authorized watcher node (admin only).
@@ -200,13 +209,13 @@ mod tests {
         client.remove_watcher(&attacker, &watcher);
     }
 
-    // 6. Edge case — double initialize panics
+    // 6. Edge case — double initialize returns AlreadyInitialized error
     #[test]
-    #[should_panic(expected = "already initialized")]
     fn test_double_initialize() {
         let (env, _admin, client) = setup();
         let other = Address::generate(&env);
-        client.initialize(&other);
+        let err = client.try_initialize(&other).unwrap_err().unwrap();
+        assert_eq!(err, ContractError::AlreadyInitialized);
     }
 
     // 7. Edge case — get_watchers returns empty before any registration
