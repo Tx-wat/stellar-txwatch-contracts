@@ -9,6 +9,15 @@ pub enum DataKey {
     Watchers,
 }
 
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ContractError {
+    AlreadyInitialized = 1,
+    Unauthorized = 2,
+    NotInitialized = 3,
+}
+
 // ── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -17,40 +26,50 @@ pub struct WatcherRegistry;
 #[contractimpl]
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
         if env
             .storage()
             .instance()
             .has(&symbol_short!("ADMIN"))
         {
-            panic!("already initialized");
+            return Err(ContractError::AlreadyInitialized);
         }
         env.storage()
             .instance()
             .set(&symbol_short!("ADMIN"), &admin);
+        Ok(())
     }
 
     /// Register an authorized watcher node (admin only).
-    pub fn register_watcher(env: Env, admin: Address, watcher: Address) {
+    pub fn register_watcher(
+        env: Env,
+        admin: Address,
+        watcher: Address,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
-        Self::assert_admin(&env, &admin);
+        Self::assert_admin(&env, &admin)?;
 
         let mut watchers = Self::load_watchers(&env);
         for i in 0..watchers.len() {
             if watchers.get(i).unwrap() == watcher {
-                return; // already registered, idempotent
+                return Ok(()); // already registered, idempotent
             }
         }
         watchers.push_back(watcher);
         env.storage()
             .instance()
             .set(&symbol_short!("WATCHERS"), &watchers);
+        Ok(())
     }
 
     /// Remove a watcher (admin only).
-    pub fn remove_watcher(env: Env, admin: Address, watcher: Address) {
+    pub fn remove_watcher(
+        env: Env,
+        admin: Address,
+        watcher: Address,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
-        Self::assert_admin(&env, &admin);
+        Self::assert_admin(&env, &admin)?;
 
         let watchers = Self::load_watchers(&env);
         let mut updated: Vec<Address> = vec![&env];
@@ -63,6 +82,7 @@ impl WatcherRegistry {
         env.storage()
             .instance()
             .set(&symbol_short!("WATCHERS"), &updated);
+        Ok(())
     }
 
     /// Check if an address is an authorized watcher.
@@ -82,20 +102,25 @@ impl WatcherRegistry {
     }
 
     /// Transfer admin role to a new address (admin only).
-    pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
+    pub fn transfer_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
-        Self::assert_admin(&env, &admin);
+        Self::assert_admin(&env, &admin)?;
         env.storage()
             .instance()
             .set(&symbol_short!("ADMIN"), &new_admin);
+        Ok(())
     }
 
     /// Get the current admin address.
-    pub fn get_admin(env: Env) -> Address {
+    pub fn get_admin(env: Env) -> Result<Address, ContractError> {
         env.storage()
             .instance()
             .get(&symbol_short!("ADMIN"))
-            .expect("not initialized")
+            .ok_or(ContractError::NotInitialized)
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -107,15 +132,16 @@ impl WatcherRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
-    fn assert_admin(env: &Env, caller: &Address) {
+    fn assert_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
         let admin: Address = env
             .storage()
             .instance()
             .get(&symbol_short!("ADMIN"))
-            .expect("not initialized");
+            .ok_or(ContractError::NotInitialized)?;
         if admin != *caller {
-            panic!("unauthorized");
+            return Err(ContractError::Unauthorized);
         }
+        Ok(())
     }
 }
 
@@ -132,7 +158,7 @@ mod tests {
         let contract_id = env.register_contract(None, WatcherRegistry);
         let client = WatcherRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.initialize(&admin);
+        client.initialize(&admin).unwrap();
         (env, admin, client)
     }
 
@@ -143,7 +169,7 @@ mod tests {
         let watcher = Address::generate(&env);
 
         assert!(!client.is_authorized(&watcher));
-        client.register_watcher(&admin, &watcher);
+        assert_eq!(client.register_watcher(&admin, &watcher), Ok(()));
         assert!(client.is_authorized(&watcher));
     }
 
@@ -153,8 +179,8 @@ mod tests {
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        client.register_watcher(&admin, &watcher);
-        client.remove_watcher(&admin, &watcher);
+        client.register_watcher(&admin, &watcher).unwrap();
+        assert_eq!(client.remove_watcher(&admin, &watcher), Ok(()));
         assert!(!client.is_authorized(&watcher));
     }
 
@@ -165,42 +191,47 @@ mod tests {
         let new_admin = Address::generate(&env);
         let watcher = Address::generate(&env);
 
-        client.transfer_admin(&admin, &new_admin);
+        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
         // old admin can no longer register
         // new admin can register
-        client.register_watcher(&new_admin, &watcher);
+        assert_eq!(client.register_watcher(&new_admin, &watcher), Ok(()));
         assert!(client.is_authorized(&watcher));
     }
 
     // 4. Unauthorized register rejected
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_register_unauthorized() {
         let (env, _admin, client) = setup();
         let attacker = Address::generate(&env);
         let watcher = Address::generate(&env);
-        client.register_watcher(&attacker, &watcher);
+
+        assert_eq!(
+            client.register_watcher(&attacker, &watcher),
+            Err(ContractError::Unauthorized)
+        );
     }
 
     // 5. Unauthorized remove rejected
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_remove_unauthorized() {
         let (env, admin, client) = setup();
         let attacker = Address::generate(&env);
         let watcher = Address::generate(&env);
 
-        client.register_watcher(&admin, &watcher);
-        client.remove_watcher(&attacker, &watcher);
+        client.register_watcher(&admin, &watcher).unwrap();
+        assert_eq!(
+            client.remove_watcher(&attacker, &watcher),
+            Err(ContractError::Unauthorized)
+        );
     }
 
-    // 6. Edge case — double initialize panics
+    // 6. Edge case — double initialize returns typed error
     #[test]
-    #[should_panic(expected = "already initialized")]
     fn test_double_initialize() {
         let (env, _admin, client) = setup();
         let other = Address::generate(&env);
-        client.initialize(&other);
+
+        assert_eq!(client.initialize(&other), Err(ContractError::AlreadyInitialized));
     }
 
     // 7. Edge case — get_watchers returns empty before any registration
@@ -216,8 +247,8 @@ mod tests {
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        client.register_watcher(&admin, &watcher);
-        client.register_watcher(&admin, &watcher);
+        assert_eq!(client.register_watcher(&admin, &watcher), Ok(()));
+        assert_eq!(client.register_watcher(&admin, &watcher), Ok(()));
         assert_eq!(client.get_watchers().len(), 1);
     }
 
@@ -228,7 +259,7 @@ mod tests {
         let watcher = Address::generate(&env);
 
         for _ in 0..5 {
-            client.register_watcher(&admin, &watcher);
+            assert_eq!(client.register_watcher(&admin, &watcher), Ok(()));
         }
 
         assert_eq!(client.get_watchers().len(), 1);
@@ -242,9 +273,9 @@ mod tests {
         let w2 = Address::generate(&env);
         let w3 = Address::generate(&env);
 
-        client.register_watcher(&admin, &w1);
-        client.register_watcher(&admin, &w2);
-        client.register_watcher(&admin, &w3);
+        client.register_watcher(&admin, &w1).unwrap();
+        client.register_watcher(&admin, &w2).unwrap();
+        client.register_watcher(&admin, &w3).unwrap();
 
         assert_eq!(client.get_watchers().len(), 3);
         assert!(client.is_authorized(&w1));
@@ -256,17 +287,30 @@ mod tests {
     #[test]
     fn test_get_admin() {
         let (_env, admin, client) = setup();
-        assert_eq!(client.get_admin(), admin);
+        assert_eq!(client.get_admin(), Ok(admin));
+    }
+
+    #[test]
+    fn test_get_admin_uninitialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+
+        assert_eq!(client.get_admin(), Err(ContractError::NotInitialized));
     }
 
     // 11. old admin cannot act after transfer
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_old_admin_rejected_after_transfer() {
         let (env, admin, client) = setup();
         let new_admin = Address::generate(&env);
         let watcher = Address::generate(&env);
-        client.transfer_admin(&admin, &new_admin);
-        client.register_watcher(&admin, &watcher);
+
+        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
+        assert_eq!(
+            client.register_watcher(&admin, &watcher),
+            Err(ContractError::Unauthorized)
+        );
     }
 }
