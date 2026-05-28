@@ -24,6 +24,16 @@ cargo build --release --target wasm32-unknown-unknown
 cargo test
 ```
 
+## How it works
+
+The system is centered around three data-flow steps:
+
+1. An owner registers an alert in `AlertRegistry` with the contract address, labels, webhook hash, and rules.
+2. Authorized watcher nodes poll Horizon for transaction activity, then check the stored alert definitions in `AlertRegistry` to determine whether a watched contract event matches.
+3. When a match is found, the watcher fires the configured webhook so downstream integrations can react.
+
+This keeps alert configuration on-chain while letting watcher nodes perform off-chain polling and delivery.
+
 ## Stellar Integration
 
 ### Network Configuration
