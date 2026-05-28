@@ -17,7 +17,13 @@ pub enum DataKey {
     /// Monotonic counter used to generate unique alert IDs.
     NextId,
 }
-
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ContractError {
+    Unauthorized = 1,
+    AlertNotFound = 2,
+}
 // ── Data types ───────────────────────────────────────────────────────────────
 
 /// On-chain configuration for a single alert.
@@ -125,16 +131,16 @@ impl AlertRegistry {
         config_id: u64,
         rules: Vec<String>,
         active: bool,
-    ) {
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let mut config: AlertConfig = env
             .storage()
             .persistent()
             .get(&DataKey::Alert(config_id))
-            .expect("alert not found");
+            .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &caller);
+        Self::assert_owner(&config, &caller)?;
 
         if rules.len() > 50 {
             panic!("too many rules: maximum is 50");
@@ -148,6 +154,7 @@ impl AlertRegistry {
             .persistent()
             .set(&DataKey::Alert(config_id), &config);
         env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        Ok(())
     }
 
     /// Update the webhook hash for an existing alert.
@@ -166,9 +173,9 @@ impl AlertRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Alert(config_id))
-            .expect("alert not found");
+            .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &caller);
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -177,6 +184,7 @@ impl AlertRegistry {
             .persistent()
             .set(&DataKey::Alert(config_id), &config);
         env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        Ok(())
     }
 
     /// Remove an alert config from storage.
@@ -197,9 +205,9 @@ impl AlertRegistry {
             .storage()
             .persistent()
             .get(&DataKey::Alert(config_id))
-            .expect("alert not found");
+            .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &caller);
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
@@ -207,6 +215,7 @@ impl AlertRegistry {
 
         Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
+        Ok(())
     }
 
     /// Retrieve a single alert config by its ID.
@@ -439,11 +448,14 @@ mod tests {
             &vec![&env, str(&env, "rule:a")],
         );
 
-        client.update_alert(
-            &owner,
-            &id,
-            &vec![&env, str(&env, "rule:b")],
-            &false,
+        assert_eq!(
+            client.update_alert(
+                &owner,
+                &id,
+                &vec![&env, str(&env, "rule:b")],
+                &false,
+            ),
+            Ok(())
         );
 
         let cfg = client.get_alert(&id).unwrap();
@@ -466,13 +478,12 @@ mod tests {
             &vec![&env],
         );
 
-        client.remove_alert(&owner, &id);
+        assert_eq!(client.remove_alert(&owner, &id), Ok(()));
         assert!(client.get_alert(&id).is_none());
     }
 
     // 4. Unauthorized update rejected
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_update_unauthorized() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
@@ -487,12 +498,14 @@ mod tests {
             &vec![&env],
         );
 
-        client.update_alert(&attacker, &id, &vec![&env], &false);
+        assert_eq!(
+            client.update_alert(&attacker, &id, &vec![&env], &false),
+            Err(ContractError::Unauthorized)
+        );
     }
 
     // 5. Unauthorized remove rejected
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_remove_unauthorized() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
@@ -507,7 +520,7 @@ mod tests {
             &vec![&env],
         );
 
-        client.remove_alert(&attacker, &id);
+        assert_eq!(client.remove_alert(&attacker, &id), Err(ContractError::Unauthorized));
     }
 
     // 6. Edge case — get nonexistent alert returns None
@@ -576,14 +589,16 @@ mod tests {
         let id = client.register_alert(
             &owner, &target, &str(&env, "A"), &str(&env, "old-hash"), &vec![&env],
         );
-        client.update_webhook(&owner, &id, &str(&env, "new-hash"));
+        assert_eq!(
+            client.update_webhook(&owner, &id, &str(&env, "new-hash")),
+            Ok(())
+        );
         let cfg = client.get_alert(&id).unwrap();
         assert_eq!(cfg.webhook_hash, str(&env, "new-hash"));
     }
 
     // 11. update_webhook unauthorized
     #[test]
-    #[should_panic(expected = "unauthorized")]
     fn test_update_webhook_unauthorized() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
@@ -593,7 +608,26 @@ mod tests {
         let id = client.register_alert(
             &owner, &target, &str(&env, "A"), &str(&env, "hash"), &vec![&env],
         );
-        client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
+        assert_eq!(
+            client.update_webhook(&attacker, &id, &str(&env, "evil-hash")),
+            Err(ContractError::Unauthorized)
+        );
+    }
+
+    #[test]
+    fn test_update_alert_missing_returns_not_found() {
+        let (env, client) = setup();
+        let attacker = Address::generate(&env);
+
+        assert_eq!(
+            client.update_alert(
+                &attacker,
+                &999u64,
+                &vec![&env],
+                &false,
+            ),
+            Err(ContractError::AlertNotFound)
+        );
     }
 
 
