@@ -46,6 +46,10 @@ impl AlertRegistry {
     ) -> u64 {
         owner.require_auth();
 
+        if label.len() > 128 {
+            panic!("label exceeds 128 bytes");
+        }
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -466,5 +470,26 @@ mod tests {
             &owner, &target, &str(&env, "A"), &str(&env, "hash"), &vec![&env],
         );
         client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
+    }
+
+    // 12. Label exceeding 128 bytes is rejected
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let long_label = str(&env, &"a".repeat(129));
+        client.register_alert(&owner, &target, &long_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 13. Label at exactly 128 bytes is accepted
+    #[test]
+    fn test_label_max_length_accepted() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let max_label = str(&env, &"a".repeat(128));
+        client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
 }
