@@ -73,6 +73,7 @@ impl WatcherRegistry {
     }
 
     /// Check if an address is an authorized watcher.
+    #[must_use]
     pub fn is_authorized(env: Env, watcher: Address) -> bool {
         let watchers = Self::load_watchers(&env);
         for i in 0..watchers.len() {
@@ -84,6 +85,7 @@ impl WatcherRegistry {
     }
 
     /// Get all authorized watcher addresses.
+    #[must_use]
     pub fn get_watchers(env: Env) -> Vec<Address> {
         Self::load_watchers(&env)
     }
@@ -98,6 +100,7 @@ impl WatcherRegistry {
     }
 
     /// Get the current admin address.
+    #[must_use]
     pub fn get_admin(env: Env) -> Address {
         // For compatibility return the first admin
         let admins: Vec<Address> = env

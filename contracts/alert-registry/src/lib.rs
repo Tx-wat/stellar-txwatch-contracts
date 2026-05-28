@@ -138,6 +138,10 @@ impl AlertRegistry {
             panic!("unauthorized");
         }
 
+        if rules.len() > 50 {
+            panic!("too many rules: maximum is 50");
+        }
+
         config.rules = rules;
         config.active = active;
         config.updated_at = env.ledger().timestamp();
@@ -257,6 +261,7 @@ impl AlertRegistry {
     }
 
     /// Get the total number of alerts ever registered (monotonic counter).
+    #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
             .instance()
@@ -597,6 +602,77 @@ mod tests {
         client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
     }
 
+
+    // 12. Issue #65 — active defaults to true on registration
+    #[test]
+    fn test_active_defaults_to_true() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.active, true);
+    }
+
+    // 13. Issue #115 — register_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_register_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+    }
+
+    // 14. Issue #115 — update_alert rejects more than 50 rules
+    #[test]
+    #[should_panic(expected = "too many rules: maximum is 50")]
+    fn test_update_alert_too_many_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env],
+        );
+
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            let _ = i;
+        }
+        client.update_alert(&owner, &id, &rules, &true);
+    }
+
+    // 15. Issue #115 — exactly 50 rules is accepted
+    #[test]
+    fn test_register_alert_exactly_50_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let mut rules: Vec<String> = vec![&env];
+        for _i in 0..50u32 {
+            rules.push_back(str(&env, "rule"));
+        }
+        let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.rules.len(), 50);
+
     // 12. Label exceeding 128 bytes is rejected
     #[test]
     #[should_panic(expected = "label exceeds 128 bytes")]
@@ -616,5 +692,6 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+
     }
 }
