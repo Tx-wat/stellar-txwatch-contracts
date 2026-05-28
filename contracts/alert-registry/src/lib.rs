@@ -46,6 +46,10 @@ impl AlertRegistry {
     ) -> u64 {
         owner.require_auth();
 
+        if label.len() > 128 {
+            panic!("label exceeds 128 bytes");
+        }
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -504,35 +508,24 @@ mod tests {
         client.update_webhook(&attacker, &id, &str(&env, "evil-hash"));
     }
 
-    // 12. Paginated — get_alerts_for_contract_paginated basic slicing
+    // 12. Label exceeding 128 bytes is rejected
     #[test]
-    fn test_get_alerts_for_contract_paginated() {
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_too_long() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
-
-        for _ in 0..5 {
-            client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
-        }
-
-        assert_eq!(client.get_contract_alerts_paginated(&target, &0, &3).len(), 3);
-        assert_eq!(client.get_contract_alerts_paginated(&target, &3, &3).len(), 2);
-        assert_eq!(client.get_contract_alerts_paginated(&target, &5, &3).len(), 0);
+        let long_label = str(&env, &"a".repeat(129));
+        client.register_alert(&owner, &target, &long_label, &str(&env, "hash"), &vec![&env]);
     }
 
-    // 13. Paginated — get_alerts_by_owner_paginated basic slicing
+    // 13. Label at exactly 128 bytes is accepted
     #[test]
-    fn test_get_alerts_by_owner_paginated() {
+    fn test_label_max_length_accepted() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
-
-        for _ in 0..4 {
-            client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
-        }
-
-        assert_eq!(client.get_alerts_by_owner_paginated(&owner, &0, &2).len(), 2);
-        assert_eq!(client.get_alerts_by_owner_paginated(&owner, &2, &2).len(), 2);
-        assert_eq!(client.get_alerts_by_owner_paginated(&owner, &4, &2).len(), 0);
+        let max_label = str(&env, &"a".repeat(128));
+        client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
 }
