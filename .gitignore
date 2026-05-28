@@ -11,14 +11,17 @@ Cargo.lock
 .vscode/
 .idea/
 *.iml
-
-# OS
+*.swp
+*.swo
 .DS_Store
-Thumbs.db
 
-# Environment / secrets
+# Generated ABI output (local runs)
+abi/
+
+# Stellar CLI local config
+.stellar/
+
+# Environment secrets
 .env
 .env.*
-
-# Compiled WASM artifacts (generated, not source)
-*.wasm
+!.env.example
