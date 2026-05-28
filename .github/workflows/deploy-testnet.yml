@@ -1,0 +1,78 @@
+name: Deploy to Testnet
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: cargo install --locked stellar-cli --features opt
+
+      - name: Deploy contracts
+        id: deploy
+        env:
+          STELLAR_IDENTITY: deployer
+        run: |
+          OUTPUT=$(bash scripts/deploy.sh 2>&1)
+          echo "$OUTPUT"
+          ALERT_ID=$(echo "$OUTPUT" | grep "Alert Registry deployed:" | awk '{print $NF}')
+          WATCHER_ID=$(echo "$OUTPUT" | grep "Watcher Registry deployed:" | awk '{print $NF}')
+          echo "alert_id=$ALERT_ID" >> "$GITHUB_OUTPUT"
+          echo "watcher_id=$WATCHER_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Update DEPLOYMENTS.md
+        env:
+          ALERT_ID: ${{ steps.deploy.outputs.alert_id }}
+          WATCHER_ID: ${{ steps.deploy.outputs.watcher_id }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          from datetime import datetime, timezone
+
+          alert_id  = os.environ["ALERT_ID"]
+          watcher_id = os.environ["WATCHER_ID"]
+          tag       = os.environ["TAG"]
+          date      = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+          text = open("DEPLOYMENTS.md").read()
+
+          # Replace contract addresses in the current-deployment table
+          text = re.sub(r"(Alert Registry \| )`[^`]+`", rf"\1`{alert_id}`", text)
+          text = re.sub(r"(Watcher Registry \| )`[^`]+`", rf"\1`{watcher_id}`", text)
+
+          # Prepend new history rows before the placeholder row
+          history_rows = (
+              f"| {date} | Alert Registry | `{alert_id}` | {tag} |\n"
+              f"| {date} | Watcher Registry | `{watcher_id}` | {tag} |\n"
+          )
+          text = text.replace(
+              "| — | — | — | Initial placeholder |",
+              history_rows + "| — | — | — | Initial placeholder |",
+              1,
+          )
+
+          open("DEPLOYMENTS.md", "w").write(text)
+          EOF
+
+      - name: Commit updated DEPLOYMENTS.md
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add DEPLOYMENTS.md
+          git commit -m "chore: update DEPLOYMENTS.md for ${{ github.ref_name }}"
+          git push origin HEAD:main

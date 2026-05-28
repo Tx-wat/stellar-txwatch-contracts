@@ -1,3 +1,27 @@
+# Build output
 target/
+
+# Cargo lock (library crates; keep for binaries if needed)
 Cargo.lock
+
+# Soroban test snapshots
 **/test_snapshots/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+.DS_Store
+
+# Generated ABI output (local runs)
+abi/
+
+# Stellar CLI local config
+.stellar/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
