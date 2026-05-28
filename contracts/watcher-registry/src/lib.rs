@@ -103,7 +103,7 @@ impl WatcherRegistry {
             .storage()
             .instance()
             .get(&symbol_short!("ADMINS"))
-            .expect("not initialized");
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         admins.get(0).unwrap()
     }
 
@@ -261,7 +261,18 @@ mod tests {
         assert_eq!(client.get_admin(), admin);
     }
 
-    // 11. old admin cannot act after transfer
+    // 11. get_admin panics with NotInitialized when contract is not initialized
+    #[test]
+    #[should_panic]
+    fn test_get_admin_not_initialized() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        client.get_admin();
+    }
+
+    // 12. old admin cannot act after transfer
     #[test]
     #[should_panic(expected = "unauthorized")]
     fn test_old_admin_rejected_after_transfer() {
