@@ -1,7 +1,7 @@
 #![no_std]
+#![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, String,
-    Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -120,6 +120,11 @@ impl AlertRegistry {
         Self::push_owner_index(&env, &owner, id);
         Self::push_contract_index(&env, &target_contract, id);
 
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("register")),
+            (id, owner, target_contract),
+        );
+
         id
     }
 
@@ -160,9 +165,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::Alert(config_id), &config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(config.owner.clone()), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(config.target_contract.clone()), 100, 100);
         Ok(())
     }
 
@@ -174,14 +179,14 @@ impl AlertRegistry {
     ///
     /// # Panics
     /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `owner` is not the alert owner.
+    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
     pub fn update_webhook(
         env: Env,
-        owner: Address,
+        caller: Address,
         config_id: u64,
         webhook_hash: String,
     ) -> Result<(), ContractError> {
-        owner.require_auth();
+        caller.require_auth();
 
         let mut config: AlertConfig = env
             .storage()
@@ -197,9 +202,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::Alert(config_id), &config);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(config.owner.clone()), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(config.target_contract.clone()), 100, 100);
         Ok(())
     }
 
@@ -213,9 +218,13 @@ impl AlertRegistry {
     ///
     /// # Panics
     /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `owner` is not the alert owner.
-    pub fn remove_alert(env: Env, owner: Address, config_id: u64) -> Result<(), ContractError> {
-        owner.require_auth();
+    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    pub fn remove_alert(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
 
         let config: AlertConfig = env
             .storage()
@@ -231,6 +240,12 @@ impl AlertRegistry {
 
         Self::remove_from_owner_index(&env, &owner, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("remove")),
+            (config_id, caller),
+        );
+
         Ok(())
     }
 
@@ -287,13 +302,33 @@ impl AlertRegistry {
         Self::configs_paginated(&env, &ids, offset, limit)
     }
 
-    /// Get the total number of alerts ever registered (monotonic counter).
+    /// Get the total number of alerts ever registered.
+    ///
+    /// This is a **monotonic counter** — it only increases and is never
+    /// decremented when alerts are removed. Use [`get_active_alert_count`]
+    /// if you need the number of currently live alerts for a given owner.
     #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
             .instance()
             .get(&symbol_short!("NEXT_ID"))
             .unwrap_or(0u64)
+    }
+
+    /// Get the number of currently active (non-removed) alerts owned by `owner`.
+    ///
+    /// Unlike [`get_alert_count`], this reflects removals and only counts
+    /// alerts whose storage entries are still live.
+    pub fn get_active_alert_count(env: Env, owner: Address) -> u32 {
+        let ids = Self::owner_index(&env, &owner);
+        let mut count: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if env.storage().persistent().has(&DataKey::Alert(id)) {
+                count += 1;
+            }
+        }
+        count
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -330,8 +365,15 @@ impl AlertRegistry {
     }
 
     /// Append `id` to the owner's index and persist it with a refreshed TTL.
+    ///
+    /// Panics if `id` is already present to enforce index uniqueness.
     fn push_owner_index(env: &Env, owner: &Address, id: u64) {
         let mut ids = Self::owner_index(env, owner);
+        for i in 0..ids.len() {
+            if ids.get(i).unwrap() == id {
+                panic!("duplicate alert id in owner index");
+            }
+        }
         ids.push_back(id);
         env.storage()
             .persistent()
@@ -342,8 +384,15 @@ impl AlertRegistry {
     }
 
     /// Append `id` to the contract's index and persist it with a refreshed TTL.
+    ///
+    /// Panics if `id` is already present to enforce index uniqueness.
     fn push_contract_index(env: &Env, target: &Address, id: u64) {
         let mut ids = Self::contract_index(env, target);
+        for i in 0..ids.len() {
+            if ids.get(i).unwrap() == id {
+                panic!("duplicate alert id in contract index");
+            }
+        }
         ids.push_back(id);
         env.storage()
             .persistent()
@@ -397,8 +446,9 @@ impl AlertRegistry {
 
     /// Resolve a list of alert IDs to their stored [`AlertConfig`] values.
     ///
-    /// IDs that no longer exist in storage (expired or removed) are silently
-    /// skipped.
+    /// IDs that no longer exist in storage (expired or removed) are **silently
+    /// skipped** — the returned vec may be shorter than `ids`. Callers that
+    /// need to detect missing entries should call [`get_alert`] per ID instead.
     fn configs_for_ids(env: &Env, ids: &Vec<u64>) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         for i in 0..ids.len() {
@@ -410,7 +460,12 @@ impl AlertRegistry {
         out
     }
 
-    fn configs_paginated(env: &Env, ids: &Vec<u64>, offset: u32, limit: u32) -> Vec<AlertConfig> {
+    fn configs_paginated(
+        env: &Env,
+        ids: &Vec<u64>,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         let len = ids.len();
         let start = offset.min(len);
@@ -603,7 +658,7 @@ mod tests {
         assert_eq!(client.get_alerts_by_owner(&owner).len(), 2);
     }
 
-    // 9. get_alert_count reflects registered alerts
+    // 9. get_alert_count reflects registered alerts (monotonic — does not decrease)
     #[test]
     fn test_get_alert_count() {
         let (env, client) = setup();
@@ -611,13 +666,7 @@ mod tests {
         let target = Address::generate(&env);
 
         assert_eq!(client.get_alert_count(), 0);
-        client.register_alert(
-            &owner,
-            &target,
-            &str(&env, "A"),
-            &str(&env, "h"),
-            &vec![&env],
-        );
+        let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
         assert_eq!(client.get_alert_count(), 1);
         client.register_alert(
             &owner,
@@ -627,6 +676,24 @@ mod tests {
             &vec![&env],
         );
         assert_eq!(client.get_alert_count(), 2);
+        // monotonic: removing does not decrease the counter
+        client.remove_alert(&owner, &id);
+        assert_eq!(client.get_alert_count(), 2);
+    }
+
+    // Issue #2 — get_active_alert_count decreases after remove
+    #[test]
+    fn test_get_active_alert_count() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        assert_eq!(client.get_active_alert_count(&owner), 0);
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        let _id2 = client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_active_alert_count(&owner), 2);
+        client.remove_alert(&owner, &id1);
+        assert_eq!(client.get_active_alert_count(&owner), 1);
     }
 
     // 10. update_webhook changes the hash
@@ -719,9 +786,8 @@ mod tests {
         let target = Address::generate(&env);
 
         let mut rules: Vec<String> = vec![&env];
-        for i in 0..51u32 {
-            rules.push_back(str(&env, "rule"));
-            let _ = i;
+        for _ in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
         }
         client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
     }
@@ -743,9 +809,8 @@ mod tests {
         );
 
         let mut rules: Vec<String> = vec![&env];
-        for i in 0..51u32 {
-            rules.push_back(str(&env, "rule"));
-            let _ = i;
+        for _ in 0..51u32 {
+            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
         }
         client.update_alert(&owner, &id, &rules, &true);
     }
@@ -758,7 +823,7 @@ mod tests {
         let target = Address::generate(&env);
 
         let mut rules: Vec<String> = vec![&env];
-        for _i in 0..50u32 {
+        for _ in 0..50u32 {
             rules.push_back(str(&env, "rule"));
         }
         let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
@@ -783,7 +848,7 @@ mod tests {
         );
     }
 
-    // 13. Label at exactly 128 bytes is accepted
+    // 17. Label at exactly 128 bytes is accepted
     #[test]
     fn test_label_max_length_accepted() {
         let (env, client) = setup();

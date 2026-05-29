@@ -1,7 +1,6 @@
 #![no_std]
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, vec, Address, Env, Vec,
-};
+#![warn(clippy::pedantic)]
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Vec};
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -32,12 +31,13 @@ pub struct WatcherRegistry;
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
-        admin.require_auth();
-
-        if env.storage().instance().has(&symbol_short!("ADMIN")) {
+        if env
+            .storage()
+            .instance()
+            .has(&symbol_short!("ADMIN"))
+        {
             return Err(ContractError::AlreadyInitialized);
         }
-
         env.storage()
             .instance()
             .set(&symbol_short!("ADMIN"), &admin);
@@ -59,10 +59,16 @@ impl WatcherRegistry {
                 return Ok(()); // already registered, idempotent
             }
         }
-        watchers.push_back(watcher);
+        watchers.push_back(watcher.clone());
         env.storage()
             .instance()
             .set(&symbol_short!("WATCHERS"), &watchers);
+
+        env.events().publish(
+            (symbol_short!("watcher"), symbol_short!("register")),
+            watcher,
+        );
+
         Ok(())
     }
 
@@ -111,10 +117,9 @@ impl WatcherRegistry {
     ) -> Result<(), ContractError> {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
-
-        env.storage()
-            .instance()
-            .set(&symbol_short!("ADMIN"), &new_admin);
+        // Transfer replaces the admin set with a single new admin
+        let admins: Vec<Address> = vec![&env, new_admin];
+        env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
         Ok(())
     }
 
