@@ -1,7 +1,7 @@
 #![no_std]
 #![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
