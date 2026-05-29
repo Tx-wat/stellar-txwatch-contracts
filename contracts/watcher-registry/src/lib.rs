@@ -69,10 +69,16 @@ impl WatcherRegistry {
                 return Ok(()); // already registered, idempotent
             }
         }
-        watchers.push_back(watcher);
+        watchers.push_back(watcher.clone());
         env.storage()
             .instance()
             .set(&symbol_short!("WATCHERS"), &watchers);
+
+        env.events().publish(
+            (symbol_short!("watcher"), symbol_short!("register")),
+            watcher,
+        );
+
         Ok(())
     }
 
