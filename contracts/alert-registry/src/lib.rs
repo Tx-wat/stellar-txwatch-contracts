@@ -113,6 +113,11 @@ impl AlertRegistry {
         Self::push_owner_index(&env, &owner, id);
         Self::push_contract_index(&env, &target_contract, id);
 
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("register")),
+            (id, owner, target_contract),
+        );
+
         id
     }
 
@@ -219,6 +224,12 @@ impl AlertRegistry {
 
         Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("remove")),
+            (config_id, caller),
+        );
+
         Ok(())
     }
 
