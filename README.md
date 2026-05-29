@@ -24,6 +24,37 @@ cargo build --release --target wasm32-unknown-unknown
 cargo test
 ```
 
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Stellar["Stellar Network (on-chain)"]
+        AR["AlertRegistry\n─────────────\nstores alert configs\nkeyed by contract address"]
+        WR["WatcherRegistry\n─────────────\nstores authorized\nwatcher addresses"]
+    end
+
+    subgraph OffChain["Off-chain (stellar-txwatch-core)"]
+        W["Watcher Node\n─────────────\npolls Horizon\nmatches rules\nfires webhooks"]
+    end
+
+    Owner["Owner"] -->|"register_alert / update_alert"| AR
+    Admin["Admin"] -->|"register_watcher / remove_watcher"| WR
+
+    W -->|"is_authorized(watcher)"| WR
+    W -->|"get_alerts_for_contract(target)"| AR
+    Horizon["Horizon API"] -->|"GET /accounts/{id}/transactions"| W
+    W -->|"POST webhook URL"| Endpoint["Downstream\nIntegration"]
+```
+
+**Data flow:**
+
+1. An owner registers an alert in `AlertRegistry` — specifying the target contract, rules, and a hashed webhook URL.
+2. Authorized watcher nodes are recorded in `WatcherRegistry` by an admin.
+3. A watcher node polls Horizon for transaction activity, fetches matching alert configs from `AlertRegistry`, and checks whether any rule matches.
+4. On a match the watcher fires the configured webhook so downstream integrations can react.
+
+---
+
 ## How it works
 
 The system is centered around three data-flow steps:
