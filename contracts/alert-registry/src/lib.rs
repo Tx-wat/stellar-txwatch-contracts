@@ -1,4 +1,5 @@
 #![no_std]
+#![warn(clippy::pedantic)]
 use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, vec, Address, Env, String, Vec,
 };
@@ -173,7 +174,12 @@ impl AlertRegistry {
     /// # Panics
     /// Panics with `"alert not found"` if `config_id` does not exist.
     /// Panics with `"unauthorized"` if `caller` is not the alert owner.
-    pub fn update_webhook(env: Env, caller: Address, config_id: u64, webhook_hash: String) {
+    pub fn update_webhook(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+        webhook_hash: String,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let mut config: AlertConfig = env
@@ -207,7 +213,11 @@ impl AlertRegistry {
     /// # Panics
     /// Panics with `"alert not found"` if `config_id` does not exist.
     /// Panics with `"unauthorized"` if `caller` is not the alert owner.
-    pub fn remove_alert(env: Env, caller: Address, config_id: u64) {
+    pub fn remove_alert(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let config: AlertConfig = env
@@ -354,7 +364,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::OwnerIndex(owner.clone()), &ids);
-        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
     }
 
     /// Append `id` to the contract's index and persist it with a refreshed TTL.
@@ -371,7 +383,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::ContractIndex(target.clone()), &ids);
-        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
     }
 
     /// Remove `id` from the owner's index and persist the updated list.
@@ -390,7 +404,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::OwnerIndex(owner.clone()), &updated);
-        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
     }
 
     /// Remove `id` from the contract's index and persist the updated list.
@@ -409,7 +425,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .set(&DataKey::ContractIndex(target.clone()), &updated);
-        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
     }
 
     /// Resolve a list of alert IDs to their stored [`AlertConfig`] values.
@@ -428,7 +446,12 @@ impl AlertRegistry {
         out
     }
 
-    fn configs_paginated(env: &Env, ids: &Vec<u64>, offset: u32, limit: u32) -> Vec<AlertConfig> {
+    fn configs_paginated(
+        env: &Env,
+        ids: &Vec<u64>,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<AlertConfig> {
         let mut out: Vec<AlertConfig> = vec![env];
         let len = ids.len();
         let start = offset.min(len);
@@ -727,9 +750,8 @@ mod tests {
         let target = Address::generate(&env);
 
         let mut rules: Vec<String> = vec![&env];
-        for i in 0..51u32 {
+        for _ in 0..51u32 {
             rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
-            let _ = i;
         }
         client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
     }
@@ -747,9 +769,8 @@ mod tests {
         );
 
         let mut rules: Vec<String> = vec![&env];
-        for i in 0..51u32 {
+        for _ in 0..51u32 {
             rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
-            let _ = i;
         }
         client.update_alert(&owner, &id, &rules, &true);
     }
@@ -762,14 +783,15 @@ mod tests {
         let target = Address::generate(&env);
 
         let mut rules: Vec<String> = vec![&env];
-        for _i in 0..50u32 {
+        for _ in 0..50u32 {
             rules.push_back(str(&env, "rule"));
         }
         let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
         let cfg = client.get_alert(&id).unwrap();
         assert_eq!(cfg.rules.len(), 50);
+    }
 
-    // 12. Label exceeding 128 bytes is rejected
+    // 16. Label exceeding 128 bytes is rejected
     #[test]
     #[should_panic(expected = "label exceeds 128 bytes")]
     fn test_label_too_long() {
@@ -780,7 +802,7 @@ mod tests {
         client.register_alert(&owner, &target, &long_label, &str(&env, "hash"), &vec![&env]);
     }
 
-    // 13. Label at exactly 128 bytes is accepted
+    // 17. Label at exactly 128 bytes is accepted
     #[test]
     fn test_label_max_length_accepted() {
         let (env, client) = setup();
@@ -788,6 +810,5 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
-
     }
 }

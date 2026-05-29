@@ -1,12 +1,16 @@
 #![no_std]
+#![warn(clippy::pedantic)]
 use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Vec};
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracterror]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(u32)]
 pub enum ContractError {
     AlreadyInitialized = 1,
+    Unauthorized = 2,
+    NotInitialized = 3,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -18,15 +22,6 @@ pub enum DataKey {
     Watchers,
 }
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum ContractError {
-    AlreadyInitialized = 1,
-    Unauthorized = 2,
-    NotInitialized = 3,
-}
-
 // ── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -36,18 +31,13 @@ pub struct WatcherRegistry;
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
-
         if env
             .storage()
             .instance()
             .has(&symbol_short!("ADMIN"))
         {
-
-        if env.storage().instance().has(&symbol_short!("ADMIN")) {
-
             return Err(ContractError::AlreadyInitialized);
         }
-        let admins: Vec<Address> = vec![&env, admin];
         env.storage()
             .instance()
             .set(&symbol_short!("ADMIN"), &admin);
@@ -130,10 +120,11 @@ impl WatcherRegistry {
         new_admin: Address,
     ) -> Result<(), ContractError> {
         admin.require_auth();
-        Self::assert_admin(&env, &admin);
+        Self::assert_admin(&env, &admin)?;
         // Transfer replaces the admin set with a single new admin
         let admins: Vec<Address> = vec![&env, new_admin];
         env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
+        Ok(())
     }
 
     /// Get the current admin address.
@@ -165,14 +156,14 @@ impl WatcherRegistry {
             .unwrap_or_else(|| vec![env])
     }
 
-    fn assert_admin(env: &Env, caller: &Address) {
+    fn assert_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
         let admins = Self::load_admins(env);
         for i in 0..admins.len() {
             if admins.get(i).unwrap() == *caller {
-                return;
+                return Ok(());
             }
         }
-        panic!("unauthorized");
+        Err(ContractError::Unauthorized)
     }
 }
 
