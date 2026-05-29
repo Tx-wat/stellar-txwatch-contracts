@@ -11,13 +11,71 @@ Contract that stores alert configurations on-chain, keyed by contract address.
 | Field | Type | Description |
 |---|---|---|
 | `label` | `String` | Human-readable name for the alert |
-| `webhook_hash` | `String` | Hashed webhook URL (privacy-preserving) |
+| `webhook_hash` | `String` | SHA-256 hex digest of the webhook URL (privacy-preserving; see [Webhook Hash Scheme](#webhook-hash-scheme) below) |
 | `rules` | `Vec<String>` | Serialized rule descriptors |
 | `owner` | `Address` | Address that owns this config |
 | `target_contract` | `Address` | Contract being watched |
 | `created_at` | `u64` | Ledger timestamp at creation |
 | `updated_at` | `u64` | Ledger timestamp of last update |
 | `active` | `bool` | Whether the alert is active |
+
+---
+
+## Webhook Hash Scheme
+
+The `webhook_hash` field stores a **SHA-256 hex digest** of the destination webhook URL. The raw URL is never written on-chain, which prevents publicly exposing private endpoint addresses.
+
+### Algorithm
+
+| Property | Value |
+|---|---|
+| Hash function | SHA-256 |
+| Encoding | Lowercase hex string (64 characters) |
+| Input | The raw webhook URL, UTF-8 encoded, no trailing newline |
+
+### Computing the Hash
+
+**Shell (openssl):**
+```bash
+echo -n "https://example.com/my-webhook" | openssl dgst -sha256
+# SHA2-256(stdin)= 6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b
+```
+
+**Shell (sha256sum):**
+```bash
+printf '%s' 'https://example.com/my-webhook' | sha256sum
+# 6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b  -
+```
+
+**JavaScript:**
+```js
+const hash = await crypto.subtle.digest(
+  "SHA-256",
+  new TextEncoder().encode("https://example.com/my-webhook"),
+);
+const hex = Array.from(new Uint8Array(hash))
+  .map((b) => b.toString(16).padStart(2, "0"))
+  .join("");
+```
+
+**Python:**
+```python
+import hashlib
+url = "https://example.com/my-webhook"
+hex_digest = hashlib.sha256(url.encode()).hexdigest()
+```
+
+**Rust:**
+```rust
+use sha2::{Digest, Sha256};
+let hex_digest = format!("{:x}", Sha256::digest(b"https://example.com/my-webhook"));
+```
+
+### Verification
+
+Off-chain watcher nodes store the original webhook URL locally and verify against the on-chain hash before firing a delivery. A mismatch indicates tampering or an out-of-date local config.
+
+To rotate a webhook URL, use `update_webhook` with the new SHA-256 hex digest and update your local watcher config to match.
 
 ---
 
@@ -51,7 +109,7 @@ Registers a new alert configuration for a target contract address.
 | `owner` | `Address` | Owner of the alert config |
 | `target_contract` | `Address` | Contract address to watch |
 | `label` | `String` | Human-readable label |
-| `webhook_hash` | `String` | Hashed webhook URL |
+| `webhook_hash` | `String` | SHA-256 hex digest of the webhook URL |
 | `rules` | `Vec<String>` | Rule descriptors |
 
 **Returns:** `u64` — the new config ID
