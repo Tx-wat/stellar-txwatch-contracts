@@ -1080,6 +1080,31 @@ mod tests {
         );
     }
 
+    // 18. Issue #69 — register_alert with empty rules stores config and is returned by get_alerts_for_contract
+    #[test]
+    fn test_register_alert_empty_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Empty Rules Alert"),
+            &str(&env, "hash-empty"),
+            &vec![&env],
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.rules.len(), 0);
+        assert_eq!(cfg.label, str(&env, "Empty Rules Alert"));
+        assert!(cfg.active);
+
+        let alerts = client.get_alerts_for_contract(&target);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts.get(0).unwrap().rules.len(), 0);
+    }
+
     // 17. Label at exactly 128 bytes is accepted
     #[test]
     fn test_label_max_length_accepted() {
