@@ -69,6 +69,8 @@ impl WatcherRegistry {
             .instance()
             .set(&symbol_short!("WATCHERS"), &watchers);
 
+        Self::increment_watcher_count(&env);
+
         env.events().publish(
             (symbol_short!("watcher"), symbol_short!("register")),
             watcher,
@@ -84,15 +86,23 @@ impl WatcherRegistry {
 
         let watchers = Self::load_watchers(&env);
         let mut updated: Vec<Address> = vec![&env];
+        let mut removed = false;
         for i in 0..watchers.len() {
             let w = watchers.get(i).unwrap();
             if w != watcher {
                 updated.push_back(w);
+            } else {
+                removed = true;
             }
         }
         env.storage()
             .instance()
             .set(&symbol_short!("WATCHERS"), &updated);
+
+        if removed {
+            Self::decrement_watcher_count(&env);
+        }
+
         Ok(())
     }
 
@@ -137,7 +147,41 @@ impl WatcherRegistry {
             .ok_or(ContractError::NotInitialized)
     }
 
+    /// Get the number of registered watchers as a cheap u32 read, avoiding
+    /// the cost of fetching and deserializing the full watcher list.
+    #[must_use]
+    pub fn get_watcher_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32)
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
+
+    fn increment_watcher_count(env: &Env) {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("W_CNT"), &(count + 1));
+    }
+
+    fn decrement_watcher_count(env: &Env) {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32);
+        if count > 0 {
+            env.storage()
+                .instance()
+                .set(&symbol_short!("W_CNT"), &(count - 1));
+        }
+    }
 
     /// Load the current watcher list from instance storage, or return an empty vec.
     fn load_watchers(env: &Env) -> Vec<Address> {
@@ -388,5 +432,62 @@ mod tests {
                 .unwrap(),
             ContractError::Unauthorized
         );
+    }
+
+    // 13. get_watcher_count returns 0 before any registration
+    #[test]
+    fn test_get_watcher_count_empty() {
+        let (_env, _admin, client) = setup();
+        assert_eq!(client.get_watcher_count(), 0);
+    }
+
+    // 14. get_watcher_count increases with registrations
+    #[test]
+    fn test_get_watcher_count_after_register() {
+        let (env, admin, client) = setup();
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+
+        assert_eq!(client.get_watcher_count(), 0);
+
+        client.try_register_watcher(&admin, &w1).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+
+        client.try_register_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 2);
+    }
+
+    // 15. get_watcher_count is idempotent — duplicate registration does not
+    //     increment the counter
+    #[test]
+    fn test_get_watcher_count_idempotent() {
+        let (env, admin, client) = setup();
+        let watcher = Address::generate(&env);
+
+        client.try_register_watcher(&admin, &watcher).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+
+        client.try_register_watcher(&admin, &watcher).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+    }
+
+    // 16. get_watcher_count decreases after removal
+    #[test]
+    fn test_get_watcher_count_after_remove() {
+        let (env, admin, client) = setup();
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+
+        client.try_register_watcher(&admin, &w1).unwrap();
+        client.try_register_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 2);
+
+        client.try_remove_watcher(&admin, &w1).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+
+        // removing a non-existent watcher does not decrement
+        let w3 = Address::generate(&env);
+        client.try_remove_watcher(&admin, &w3).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
     }
 }
