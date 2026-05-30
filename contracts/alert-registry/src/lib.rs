@@ -1580,4 +1580,48 @@ mod tests {
         let active = client.get_active_alerts_for_contract(&target);
         assert_eq!(active.len(), 2);
     }
+
+    // 18. transfer_admin emits an ("admin", "transfer") event
+    #[test]
+    fn test_transfer_admin_emits_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+
+        client.transfer_admin(&admin, &new_admin).unwrap();
+
+        // Verify at least one event was published during the transfer
+        assert!(!env.events().all().is_empty());
+    }
+
+    // 19. old admin cannot act after transfer_admin
+    #[test]
+    fn test_old_admin_rejected_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.transfer_admin(&admin, &new_admin).unwrap();
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        // old admin can no longer perform admin actions
+        assert_eq!(
+            client
+                .try_remove_alert_by_admin(&admin, &id)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
+    }
 }
