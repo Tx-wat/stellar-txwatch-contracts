@@ -24,6 +24,8 @@ pub enum DataKey {
 pub enum ContractError {
     Unauthorized = 1,
     AlertNotFound = 2,
+    AlreadyInitialized = 3,
+    NotInitialized = 4,
 }
 // ── Data types ───────────────────────────────────────────────────────────────
 
@@ -95,6 +97,9 @@ impl AlertRegistry {
             panic!("label exceeds 128 bytes");
         }
 
+        Self::validate_rules(&env, &rules);
+        Self::assert_per_owner_limit(&env, &owner);
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -148,9 +153,7 @@ impl AlertRegistry {
 
         Self::assert_owner(&config, &caller)?;
 
-        if rules.len() > 50 {
-            panic!("too many rules: maximum is 50");
-        }
+        Self::validate_rules(&env, &rules);
 
         config.rules = rules;
         config.active = active;
@@ -250,6 +253,74 @@ impl AlertRegistry {
         env.storage().persistent().get(&DataKey::Alert(config_id))
     }
 
+    /// Initialize the optional admin role for the registry. Can only be called once.
+    pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        if env.storage().instance().has(&symbol_short!("ADMIN")) {
+            return Err(ContractError::AlreadyInitialized);
+        }
+        env.storage().instance().set(&symbol_short!("ADMIN"), &admin);
+        Ok(())
+    }
+
+    /// Transfer the admin role to a new address (admin only).
+    pub fn transfer_admin(
+        env: Env,
+        admin: Address,
+        new_admin: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+        env.storage().instance().set(&symbol_short!("ADMIN"), &new_admin);
+        Ok(())
+    }
+
+    /// Get the current admin address.
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("ADMIN"))
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized))
+    }
+
+    /// Set a per-owner active alert limit (admin only). A value of `0` means no limit.
+    pub fn set_per_owner_alert_limit(
+        env: Env,
+        admin: Address,
+        limit: u32,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+        env.storage().instance().set(&symbol_short!("LIMIT"), &limit);
+        Ok(())
+    }
+
+    /// Get the configured per-owner active alert limit, or `0` if none is set.
+    pub fn get_per_owner_alert_limit(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("LIMIT"))
+            .unwrap_or(0u32)
+    }
+
+    /// Remove any alert config from storage (admin only).
+    pub fn remove_alert_by_admin(
+        env: Env,
+        admin: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        let config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .ok_or(ContractError::AlertNotFound)?;
+
+        Self::remove_alert_record(&env, &config, config_id, &admin);
+        Ok(())
+    }
+
     /// Retrieve all alert configs that watch a given contract address.
     ///
     /// Returns an empty vec if no alerts are registered for `target_contract`.
@@ -315,6 +386,68 @@ impl AlertRegistry {
             }
         }
         count
+    }
+
+    fn assert_owner(config: &AlertConfig, caller: &Address) -> Result<(), ContractError> {
+        if config.owner == *caller {
+            Ok(())
+        } else {
+            Err(ContractError::Unauthorized)
+        }
+    }
+
+    fn assert_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
+        if !env.storage().instance().has(&symbol_short!("ADMIN")) {
+            return Err(ContractError::NotInitialized);
+        }
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ADMIN"))
+            .unwrap();
+        if admin == *caller {
+            Ok(())
+        } else {
+            Err(ContractError::Unauthorized)
+        }
+    }
+
+    fn assert_per_owner_limit(env: &Env, owner: &Address) {
+        let limit = Self::get_per_owner_alert_limit(env);
+        if limit > 0 && Self::get_active_alert_count(env.clone(), owner.clone()) >= limit {
+            panic!("owner alert limit exceeded");
+        }
+    }
+
+    fn validate_rules(env: &Env, rules: &Vec<String>) {
+        if rules.len() > 50 {
+            panic!("too many rules: maximum is 50");
+        }
+        for i in 0..rules.len() {
+            Self::validate_rule(env, &rules.get(i).unwrap());
+        }
+    }
+
+    fn validate_rule(env: &Env, rule: &String) {
+        let transfer = String::from_str(env, "rule:transfer");
+        let mint = String::from_str(env, "rule:mint");
+        if *rule != transfer && *rule != mint {
+            panic!("invalid rule descriptor");
+        }
+    }
+
+    fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: &Address) {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Alert(config_id));
+
+        Self::remove_from_owner_index(env, &config.owner, config_id);
+        Self::remove_from_contract_index(env, &config.target_contract, config_id);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("remove")),
+            (config_id, caller.clone()),
+        );
     }
 
     // ── Internal helpers ─────────────────────────────────────────────────────
@@ -575,6 +708,108 @@ mod tests {
             client.update_alert(&attacker, &id, &vec![&env], &false),
             Err(ContractError::Unauthorized)
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid rule descriptor")]
+    fn test_register_alert_rejects_invalid_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:unknown")],
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid rule descriptor")]
+    fn test_update_alert_rejects_invalid_rules() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        client.update_alert(&owner, &id, &vec![&env, str(&env, "rule:bogus")], &true);
+    }
+
+    #[test]
+    fn test_admin_remove_any_alert() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        assert_eq!(client.remove_alert_by_admin(&admin, &id), Ok(()));
+        assert!(client.get_alert(&id).is_none());
+    }
+
+    #[test]
+    #[should_panic(expected = "owner alert limit exceeded")]
+    fn test_admin_set_per_owner_alert_limit() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        client.set_per_owner_alert_limit(&admin, &1u32).unwrap();
+
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert1"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert2"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+    }
+
+    #[test]
+    fn test_admin_transfer_admin() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+
+        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        assert_eq!(client.remove_alert_by_admin(&new_admin, &id), Ok(()));
     }
 
     // 5. Unauthorized remove rejected

@@ -90,7 +90,7 @@ The `rules` field is a `Vec<String>` containing serialized rule descriptors. Eac
 | `rule:transfer` | Alert when the target contract emits a transfer-like action. |
 | `rule:mint` | Alert when the target contract performs a mint or issuance event. |
 
-The alert registry stores these descriptors verbatim and does not validate or execute rule semantics on-chain. Off-chain watcher logic interprets prefixes and applies the corresponding alert behavior.
+The alert registry stores these descriptors verbatim and validates that each entry uses a recognized prefix before accepting it. Off-chain watcher logic still interprets prefixes and applies the corresponding alert behavior.
 
 ---
 
@@ -101,6 +101,8 @@ The alert registry stores these descriptors verbatim and does not validate or ex
 Registers a new alert configuration for a target contract address.
 
 **Requires auth:** `owner`
+
+**Validation:** Rule descriptors are checked against the known prefixes `rule:transfer` and `rule:mint`, and the contract panics if any rule is not recognized.
 
 **Parameters**
 
@@ -136,7 +138,86 @@ Updates the rules and active status of an existing alert. Only the original owne
 **Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
 
 ---
+### `initialize`
 
+Initializes an optional admin for the contract. Can only be called once.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Address to assign as admin |
+
+**Returns:** nothing
+
+---
+
+### `transfer_admin`
+
+Transfers admin authority to a new address. Requires current admin auth.
+
+**Requires auth:** `admin`
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Current admin address |
+| `new_admin` | `Address` | Address to become the new admin |
+
+**Returns:** nothing
+
+---
+
+### `get_admin`
+
+Returns the current admin address.
+
+**Returns:** `Address`
+
+---
+
+### `set_per_owner_alert_limit`
+
+Sets a global per-owner limit on active alerts. A value of `0` disables the limit.
+
+**Requires auth:** `admin`
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Current admin address |
+| `limit` | `u32` | New per-owner active alert limit |
+
+**Returns:** nothing
+
+---
+
+### `get_per_owner_alert_limit`
+
+Returns the configured per-owner active alert limit, or `0` if no limit is set.
+
+**Returns:** `u32`
+
+---
+
+### `remove_alert_by_admin`
+
+Removes any alert config by ID. Requires admin auth.
+
+**Requires auth:** `admin`
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Current admin address |
+| `config_id` | `u64` | ID of the alert to remove |
+
+**Returns:** nothing
+
+---
 ### `remove_alert`
 
 Permanently removes an alert config. Only the original owner may call this.
