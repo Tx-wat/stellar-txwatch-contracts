@@ -194,7 +194,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -232,13 +232,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +247,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -274,6 +266,9 @@ impl AlertRegistry {
     }
 
     /// Transfer the admin role to a new address (admin only).
+    ///
+    /// Emits an `("admin", "transfer")` event recording both the old and new
+    /// admin so the change is visible on-chain and auditable.
     pub fn transfer_admin(
         env: Env,
         admin: Address,
@@ -282,6 +277,13 @@ impl AlertRegistry {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
         env.storage().instance().set(&symbol_short!("ADMIN"), &new_admin);
+
+        // Emit an auditable on-chain event recording the full admin transfer.
+        env.events().publish(
+            (symbol_short!("admin"), symbol_short!("transfer")),
+            (admin, new_admin),
+        );
+
         Ok(())
     }
 
@@ -1088,5 +1090,49 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 18. transfer_admin emits an ("admin", "transfer") event
+    #[test]
+    fn test_transfer_admin_emits_event() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+
+        client.transfer_admin(&admin, &new_admin).unwrap();
+
+        // Verify at least one event was published during the transfer
+        assert!(!env.events().all().is_empty());
+    }
+
+    // 19. old admin cannot act after transfer_admin
+    #[test]
+    fn test_old_admin_rejected_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.transfer_admin(&admin, &new_admin).unwrap();
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        // old admin can no longer perform admin actions
+        assert_eq!(
+            client
+                .try_remove_alert_by_admin(&admin, &id)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
     }
 }
