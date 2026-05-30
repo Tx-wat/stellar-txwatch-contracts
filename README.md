@@ -157,6 +157,8 @@ let config_id = alert_registry.register_alert(
 );
 ```
 
+> **Re-entrancy safety:** Soroban executes contract calls atomically and prevents classic callback-based re-entrancy within the same transaction. The registry contracts only mutate local storage after `require_auth()` succeeds, and they do not invoke external contracts during state updates.
+
 ### Auth Flow
 
 All mutating functions require Stellar auth signatures:

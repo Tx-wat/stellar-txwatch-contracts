@@ -123,3 +123,10 @@ All state is stored in **instance storage**:
 |---|---|---|
 | `"ADMIN"` | `Address` | Current admin address |
 | `"WATCHERS"` | `Vec<Address>` | List of authorized watcher addresses |
+---
+
+## Re-entrancy and cross-contract safety
+
+This contract is safe to call from other Soroban contracts. Soroban executes contract calls atomically and does not allow classic callback-style re-entrancy into the same contract within the same transaction.
+
+All mutating entrypoints in `WatcherRegistry` require `admin.require_auth()` before updating storage, and no state-changing operation performs external callbacks. This makes the registry resistant to standard cross-contract re-entrancy attacks.

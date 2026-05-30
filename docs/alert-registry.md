@@ -215,7 +215,6 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 **Returns:** nothing
 
 **Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
-
 ---
 
 ### `get_contract_alerts_paginated`
@@ -265,3 +264,11 @@ Returns the total number of alerts ever registered (monotonic counter — does n
 - Alert configs are stored in **persistent storage** under `DataKey::Alert(id)`.
 - Owner and contract indexes are stored in **persistent storage** under `DataKey::OwnerIndex` and `DataKey::ContractIndex`.
 - The auto-incrementing ID counter is stored in **instance storage**.
+
+---
+
+## Re-entrancy and cross-contract safety
+
+This contract is safe to call from other Soroban contracts. Soroban executes contract calls atomically and does not allow classic callback-style re-entrancy into the same contract within the same transaction.
+
+All state-mutating functions in `AlertRegistry` first enforce authorization with `require_auth()` and then perform local storage updates. There are no external callbacks or indirect contract calls during state mutation, so cross-contract invocation cannot introduce re-entrancy vulnerabilities.
