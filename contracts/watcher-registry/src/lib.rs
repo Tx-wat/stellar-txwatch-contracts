@@ -370,6 +370,19 @@ mod tests {
         client.get_admin();
     }
 
+    // Issue #59 — remove_watcher on a never-registered address: no panic, no change
+    #[test]
+    fn test_remove_watcher_not_registered() {
+        let (env, admin, client) = setup();
+        let watcher = Address::generate(&env);
+
+        // removing an address that was never registered succeeds without error
+        assert_eq!(client.try_remove_watcher(&admin, &watcher).unwrap(), Ok(()));
+        // watcher list remains empty
+        assert_eq!(client.get_watchers().len(), 0);
+        assert!(!client.is_authorized(&watcher));
+    }
+
     // 12. old admin cannot act after transfer
     #[test]
     fn test_old_admin_rejected_after_transfer() {
