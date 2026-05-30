@@ -136,9 +136,9 @@ impl AlertRegistry {
     /// Requires a valid Stellar auth signature from `owner`, who must also be
     /// the original owner of the alert.
     ///
-    /// # Panics
-    /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `owner` is not the alert owner.
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `owner` is not the alert owner.
     pub fn update_alert(
         env: Env,
         owner: Address,
@@ -177,9 +177,9 @@ impl AlertRegistry {
     /// Requires a valid Stellar auth signature from `owner`, who must also be
     /// the original owner of the alert.
     ///
-    /// # Panics
-    /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     pub fn update_webhook(
         env: Env,
         caller: Address,
@@ -194,7 +194,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -216,9 +216,9 @@ impl AlertRegistry {
     /// Requires a valid Stellar auth signature from `owner`, who must also be
     /// the original owner of the alert.
     ///
-    /// # Panics
-    /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     pub fn remove_alert(
         env: Env,
         caller: Address,
@@ -397,14 +397,6 @@ impl AlertRegistry {
             }
         }
         count
-    }
-
-    fn assert_owner(config: &AlertConfig, caller: &Address) -> Result<(), ContractError> {
-        if config.owner == *caller {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     fn assert_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
@@ -846,6 +838,43 @@ mod tests {
                 .unwrap(),
             ContractError::Unauthorized
         );
+    }
+
+    // Issue #49 — get_alert_count is monotonically increasing after multiple register/remove cycles
+    #[test]
+    fn test_get_alert_count_after_multiple_cycles() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Start at 0
+        assert_eq!(client.get_alert_count(), 0);
+
+        // Cycle 1: register -> count goes to 1
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_alert_count(), 1);
+        // remove -> count stays at 1 (monotonic)
+        client.remove_alert(&owner, &id1);
+        assert_eq!(client.get_alert_count(), 1);
+
+        // Cycle 2: register -> count goes to 2
+        let id2 = client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_alert_count(), 2);
+        // remove -> count stays at 2
+        client.remove_alert(&owner, &id2);
+        assert_eq!(client.get_alert_count(), 2);
+
+        // Cycle 3: register -> count goes to 3
+        let id3 = client.register_alert(&owner, &target, &str(&env, "C"), &str(&env, "h"), &vec![&env]);
+        assert_eq!(client.get_alert_count(), 3);
+        // remove -> count stays at 3
+        client.remove_alert(&owner, &id3);
+        assert_eq!(client.get_alert_count(), 3);
+
+        // Final verification: after 3 cycles the counter is 3, never reset to 0
+        assert_eq!(client.get_alert_count(), 3);
+        // No active alerts remain
+        assert_eq!(client.get_active_alert_count(&owner), 0);
     }
 
     // 6. Edge case — get nonexistent alert returns None
