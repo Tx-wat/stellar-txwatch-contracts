@@ -62,9 +62,11 @@ Removes an address from the authorized watcher set.
 
 ---
 
-### `is_authorized`
+### `is_watcher_authorized`
 
 Checks whether an address is a currently authorized watcher.
+
+Renamed from `is_authorized` for clarity in cross-contract call contexts — the name makes explicit *what* the address is being authorized as.
 
 **Parameters**
 

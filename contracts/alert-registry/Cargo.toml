@@ -8,9 +8,12 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }
+watcher-registry = { path = "../watcher-registry", optional = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
+watcher-registry = { path = "../watcher-registry", features = ["testutils"] }
 
 [features]
-testutils = ["soroban-sdk/testutils"]
+testutils = ["soroban-sdk/testutils", "watcher-registry/testutils"]
+watcher-gating = ["watcher-registry"]
