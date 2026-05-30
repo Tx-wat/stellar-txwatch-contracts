@@ -114,6 +114,15 @@ impl WatcherRegistry {
         Self::load_watchers(&env)
     }
 
+    /// Get the number of registered watchers.
+    ///
+    /// This is a cheap integer read that returns the count of authorized
+    /// watchers without requiring callers to fetch and count the full list.
+    #[must_use]
+    pub fn get_watcher_count(env: Env) -> u32 {
+        Self::load_watchers(&env).len()
+    }
+
     /// Transfer admin role to a new address (admin only).
     pub fn transfer_admin(
         env: Env,
@@ -388,5 +397,32 @@ mod tests {
                 .unwrap(),
             ContractError::Unauthorized
         );
+    }
+
+    // 13. get_watcher_count returns correct count
+    #[test]
+    fn test_get_watcher_count() {
+        let (env, admin, client) = setup();
+        
+        // Initially zero watchers
+        assert_eq!(client.get_watcher_count(), 0);
+        
+        // Add three watchers
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+        let w3 = Address::generate(&env);
+        
+        client.try_register_watcher(&admin, &w1).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+        
+        client.try_register_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 2);
+        
+        client.try_register_watcher(&admin, &w3).unwrap();
+        assert_eq!(client.get_watcher_count(), 3);
+        
+        // Remove one watcher
+        client.try_remove_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 2);
     }
 }

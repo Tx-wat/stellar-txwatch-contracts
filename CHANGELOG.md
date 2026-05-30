@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `get_watcher_count` function to WatcherRegistry for efficient watcher count queries (#21)
+- TypeScript bindings for AlertRegistry published to npm as `@tx-wat/alert-registry-bindings` (#120)
+- GitHub Actions workflow for automated npm publishing of TypeScript bindings
+- `make bindings` target for local TypeScript binding generation
+- Documentation for `get_watcher_count` in `docs/watcher-registry.md`
+- Comprehensive README and usage examples for TypeScript bindings package
 - `CHANGELOG.md` to track version history (#75)
 - `SECURITY.md` with responsible disclosure policy (#76)
 - `docs/ttl.md` documenting TTL values and their implications (#77)

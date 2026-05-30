@@ -1,0 +1,52 @@
+name: Publish TypeScript Bindings
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish-alert-registry-bindings:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: wasm32-unknown-unknown
+
+      - name: Install Stellar CLI
+        run: |
+          cargo install --locked stellar-cli --features opt
+
+      - name: Build contracts
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        working-directory: bindings/alert-registry
+        run: npm install
+
+      - name: Generate TypeScript bindings
+        working-directory: bindings/alert-registry
+        run: npm run build
+
+      - name: Publish to npm
+        working-directory: bindings/alert-registry
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
