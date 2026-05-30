@@ -128,6 +128,27 @@ impl WatcherRegistry {
         Ok(())
     }
 
+    /// Remove all authorized watchers at once (admin only).
+    ///
+    /// This is intended for emergency deauthorization scenarios where all
+    /// watcher permissions must be revoked immediately.
+    pub fn clear_all_watchers(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        let empty: Vec<Address> = vec![&env];
+        env.storage()
+            .instance()
+            .set(&symbol_short!("WATCHERS"), &empty);
+
+        env.events().publish(
+            (symbol_short!("watcher"), symbol_short!("clear_all")),
+            (),
+        );
+
+        Ok(())
+    }
+
     /// Get the current admin address.
     #[must_use]
     pub fn get_admin(env: Env) -> Result<Address, ContractError> {
@@ -370,7 +391,60 @@ mod tests {
         client.get_admin();
     }
 
-    // 12. old admin cannot act after transfer
+    // 12. clear_all_watchers removes all watchers
+    #[test]
+    fn test_clear_all_watchers() {
+        let (env, admin, client) = setup();
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+        let w3 = Address::generate(&env);
+
+        client.try_register_watcher(&admin, &w1).unwrap();
+        client.try_register_watcher(&admin, &w2).unwrap();
+        client.try_register_watcher(&admin, &w3).unwrap();
+        assert_eq!(client.get_watchers().len(), 3);
+
+        assert_eq!(
+            client.try_clear_all_watchers(&admin).unwrap(),
+            Ok(())
+        );
+        assert_eq!(client.get_watchers().len(), 0);
+        assert!(!client.is_authorized(&w1));
+        assert!(!client.is_authorized(&w2));
+        assert!(!client.is_authorized(&w3));
+    }
+
+    // 13. clear_all_watchers rejects non-admin
+    #[test]
+    fn test_clear_all_watchers_unauthorized() {
+        let (env, admin, client) = setup();
+        let attacker = Address::generate(&env);
+
+        client.try_register_watcher(&admin, &Address::generate(&env)).unwrap();
+
+        assert_eq!(
+            client
+                .try_clear_all_watchers(&attacker)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
+        assert_eq!(client.get_watchers().len(), 1);
+    }
+
+    // 14. clear_all_watchers on empty list is a no-op (does not error)
+    #[test]
+    fn test_clear_all_watchers_empty() {
+        let (env, admin, client) = setup();
+
+        assert_eq!(
+            client.try_clear_all_watchers(&admin).unwrap(),
+            Ok(())
+        );
+        assert_eq!(client.get_watchers().len(), 0);
+    }
+
+    // 15. old admin cannot act after transfer
     #[test]
     fn test_old_admin_rejected_after_transfer() {
         let (env, admin, client) = setup();

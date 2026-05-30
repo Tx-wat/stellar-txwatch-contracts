@@ -62,6 +62,24 @@ Removes an address from the authorized watcher set.
 
 ---
 
+### `clear_all_watchers`
+
+Removes all authorized watcher addresses at once. Intended for emergency deauthorization scenarios.
+
+**Requires auth:** `admin`
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Current admin |
+
+**Returns:** nothing
+
+**Panics:** `"unauthorized"` if `admin` does not match the stored admin.
+
+---
+
 ### `is_authorized`
 
 Checks whether an address is a currently authorized watcher.
