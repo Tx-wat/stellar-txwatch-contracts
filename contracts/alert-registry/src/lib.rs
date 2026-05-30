@@ -864,6 +864,14 @@ mod tests {
         assert_eq!(result.len(), 0);
     }
 
+    // Issue #68 — get_alerts_by_owner returns empty vec for address with no alerts
+    #[test]
+    fn test_get_alerts_by_owner_empty() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        assert_eq!(client.get_alerts_by_owner(&owner).len(), 0);
+    }
+
     // 8. Index queries — get_alerts_for_contract and get_alerts_by_owner
     #[test]
     fn test_index_queries() {
