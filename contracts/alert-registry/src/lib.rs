@@ -1,7 +1,7 @@
 #![no_std]
 #![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, contracterror, panic_with_error, symbol_short, vec, Address, Env, String, Vec,
 };
 
 // ── Storage keys ────────────────────────────────────────────────────────────
@@ -101,6 +101,9 @@ impl AlertRegistry {
             panic!("too many rules: maximum is 50");
         }
 
+        Self::validate_rules(&env, &rules);
+        Self::assert_per_owner_limit(&env, &owner);
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -194,7 +197,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -232,13 +235,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +250,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -424,7 +419,7 @@ impl AlertRegistry {
     }
 
     fn assert_per_owner_limit(env: &Env, owner: &Address) {
-        let limit = Self::get_per_owner_alert_limit(env);
+        let limit = Self::get_per_owner_alert_limit(env.clone());
         if limit > 0 && Self::get_active_alert_count(env.clone(), owner.clone()) >= limit {
             panic!("owner alert limit exceeded");
         }
@@ -615,7 +610,7 @@ impl AlertRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, vec, Env, String};
 
     fn setup() -> (Env, AlertRegistryClient<'static>) {
         let env = Env::default();
@@ -662,19 +657,19 @@ mod tests {
             &target,
             &str(&env, "Alert"),
             &str(&env, "hash"),
-            &vec![&env, str(&env, "rule:a")],
+            &vec![&env, str(&env, "rule:transfer")],
         );
 
         assert_eq!(
             client
-                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:b")], &false)
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &false)
                 .unwrap(),
             Ok(())
         );
 
         let cfg = client.get_alert(&id).unwrap();
         assert!(!cfg.active);
-        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:b"));
+        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:mint"));
     }
 
     // 3. Happy path — remove alert
@@ -759,7 +754,7 @@ mod tests {
     fn test_admin_remove_any_alert() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -771,7 +766,7 @@ mod tests {
             &vec![&env, str(&env, "rule:mint")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&admin, &id), Ok(()));
+        client.remove_alert_by_admin(&admin, &id);
         assert!(client.get_alert(&id).is_none());
     }
 
@@ -780,8 +775,8 @@ mod tests {
     fn test_admin_set_per_owner_alert_limit() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
-        client.set_per_owner_alert_limit(&admin, &1u32).unwrap();
+        client.initialize(&admin);
+        client.set_per_owner_alert_limit(&admin, &1u32);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -806,10 +801,10 @@ mod tests {
     fn test_admin_transfer_admin() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
 
-        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
+        client.transfer_admin(&admin, &new_admin);
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
         let id = client.register_alert(
@@ -820,7 +815,7 @@ mod tests {
             &vec![&env, str(&env, "rule:transfer")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&new_admin, &id), Ok(()));
+        client.remove_alert_by_admin(&new_admin, &id);
     }
 
     // 5. Unauthorized remove rejected
@@ -1019,7 +1014,7 @@ mod tests {
 
         let mut rules: Vec<String> = vec![&env];
         for _ in 0..51u32 {
-            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            rules.push_back(str(&env, "rule"));
         }
         client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
     }
@@ -1042,7 +1037,7 @@ mod tests {
 
         let mut rules: Vec<String> = vec![&env];
         for _ in 0..51u32 {
-            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            rules.push_back(str(&env, "rule"));
         }
         client.update_alert(&owner, &id, &rules, &true);
     }
@@ -1056,7 +1051,7 @@ mod tests {
 
         let mut rules: Vec<String> = vec![&env];
         for _ in 0..50u32 {
-            rules.push_back(str(&env, "rule"));
+            rules.push_back(str(&env, "rule:transfer"));
         }
         let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
         let cfg = client.get_alert(&id).unwrap();
@@ -1088,5 +1083,63 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 18. update_webhook advances updated_at beyond its value at registration
+    #[test]
+    fn test_update_webhook_updates_timestamp() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        let original_updated_at = client.get_alert(&id).unwrap().updated_at;
+        env.ledger().set_timestamp(original_updated_at + 100);
+
+        client.try_update_webhook(&owner, &id, &str(&env, "new-hash")).unwrap().unwrap();
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(cfg.updated_at > original_updated_at);
+    }
+
+    // 19. Multiple owners watching the same contract — indexes are isolated per owner
+    #[test]
+    fn test_multiple_owners_overlapping_target_contract() {
+        let (env, client) = setup();
+        let owner_a = Address::generate(&env);
+        let owner_b = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.register_alert(
+            &owner_a,
+            &target,
+            &str(&env, "Alert-A"),
+            &str(&env, "hash-a"),
+            &vec![&env],
+        );
+        client.register_alert(
+            &owner_b,
+            &target,
+            &str(&env, "Alert-B"),
+            &str(&env, "hash-b"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
+
+        let alerts_a = client.get_alerts_by_owner(&owner_a);
+        assert_eq!(alerts_a.len(), 1);
+        assert_eq!(alerts_a.get(0).unwrap().owner, owner_a);
+
+        let alerts_b = client.get_alerts_by_owner(&owner_b);
+        assert_eq!(alerts_b.len(), 1);
+        assert_eq!(alerts_b.get(0).unwrap().owner, owner_b);
     }
 }
