@@ -174,12 +174,12 @@ impl AlertRegistry {
     /// Update the webhook hash for an existing alert.
     ///
     /// # Auth
-    /// Requires a valid Stellar auth signature from `owner`, who must also be
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
     /// the original owner of the alert.
     ///
-    /// # Panics
-    /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     pub fn update_webhook(
         env: Env,
         caller: Address,
@@ -194,9 +194,56 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
+        config.updated_at = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Alert(config_id), &config);
+        env.storage().persistent().extend_ttl(&DataKey::Alert(config_id), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::OwnerIndex(config.owner.clone()), 100, 100);
+        env.storage().persistent().extend_ttl(&DataKey::ContractIndex(config.target_contract.clone()), 100, 100);
+        Ok(())
+    }
+
+    /// Update only the label of an existing alert, leaving rules and webhook hash unchanged.
+    ///
+    /// Use this when you want to rename an alert without touching its rules or
+    /// rotating its webhook URL.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    ///
+    /// # Panics
+    /// Panics if `label` exceeds 128 bytes.
+    pub fn update_label(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+        label: String,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        if label.len() > 128 {
+            panic!("label exceeds 128 bytes");
+        }
+
+        let mut config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .ok_or(ContractError::AlertNotFound)?;
+
+        Self::assert_owner(&config, &caller)?;
+
+        config.label = label;
         config.updated_at = env.ledger().timestamp();
 
         env.storage()
@@ -213,12 +260,12 @@ impl AlertRegistry {
     /// Also removes the alert ID from the owner and contract indexes.
     ///
     /// # Auth
-    /// Requires a valid Stellar auth signature from `owner`, who must also be
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
     /// the original owner of the alert.
     ///
-    /// # Panics
-    /// Panics with `"alert not found"` if `config_id` does not exist.
-    /// Panics with `"unauthorized"` if `caller` is not the alert owner.
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     pub fn remove_alert(
         env: Env,
         caller: Address,
@@ -232,13 +279,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +294,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -335,9 +374,21 @@ impl AlertRegistry {
     /// Retrieve all alert configs that watch a given contract address.
     ///
     /// Returns an empty vec if no alerts are registered for `target_contract`.
+    /// Includes both active and inactive alerts — use
+    /// [`get_active_alerts_for_contract`] to filter to active-only.
     pub fn get_alerts_for_contract(env: Env, target_contract: Address) -> Vec<AlertConfig> {
         let ids = Self::contract_index(&env, &target_contract);
         Self::configs_for_ids(&env, &ids)
+    }
+
+    /// Retrieve only the active alert configs that watch a given contract address.
+    ///
+    /// Equivalent to [`get_alerts_for_contract`] but filters out any entries
+    /// where `active == false`. Returns an empty vec if no active alerts exist
+    /// for `target_contract`.
+    pub fn get_active_alerts_for_contract(env: Env, target_contract: Address) -> Vec<AlertConfig> {
+        let ids = Self::contract_index(&env, &target_contract);
+        Self::active_configs_for_ids(&env, &ids)
     }
 
     /// Retrieve all alert configs owned by a given address.
@@ -585,6 +636,23 @@ impl AlertRegistry {
             let id = ids.get(i).unwrap();
             if let Some(cfg) = env.storage().persistent().get(&DataKey::Alert(id)) {
                 out.push_back(cfg);
+            }
+        }
+        out
+    }
+
+    /// Like [`configs_for_ids`] but only includes entries where `active == true`.
+    ///
+    /// IDs that no longer exist in storage are silently skipped, as are configs
+    /// whose `active` field is `false`.
+    fn active_configs_for_ids(env: &Env, ids: &Vec<u64>) -> Vec<AlertConfig> {
+        let mut out: Vec<AlertConfig> = vec![env];
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(cfg) = env.storage().persistent().get::<DataKey, AlertConfig>(&DataKey::Alert(id)) {
+                if cfg.active {
+                    out.push_back(cfg);
+                }
             }
         }
         out
@@ -1088,5 +1156,208 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // ── Feature A: update_label ───────────────────────────────────────────────
+
+    // 18. Happy path — update_label changes only the label
+    #[test]
+    fn test_update_label_changes_label() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Original"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        assert_eq!(
+            client.try_update_label(&owner, &id, &str(&env, "Renamed")).unwrap(),
+            Ok(())
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.label, str(&env, "Renamed"));
+        // rules and webhook_hash must be untouched
+        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:transfer"));
+        assert_eq!(cfg.webhook_hash, str(&env, "hash"));
+        assert!(cfg.active);
+    }
+
+    // 19. update_label — unauthorized caller is rejected
+    #[test]
+    fn test_update_label_unauthorized() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(
+            client
+                .try_update_label(&attacker, &id, &str(&env, "Hacked"))
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
+    }
+
+    // 20. update_label — nonexistent alert returns AlertNotFound
+    #[test]
+    fn test_update_label_not_found() {
+        let (env, client) = setup();
+        let caller = Address::generate(&env);
+
+        assert_eq!(
+            client
+                .try_update_label(&caller, &999u64, &str(&env, "X"))
+                .unwrap_err()
+                .unwrap(),
+            ContractError::AlertNotFound
+        );
+    }
+
+    // 21. update_label — label exceeding 128 bytes is rejected
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_update_label_too_long() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        client.update_label(&owner, &id, &str(&env, &"a".repeat(129)));
+    }
+
+    // 22. update_label — exactly 128 bytes is accepted
+    #[test]
+    fn test_update_label_max_length_accepted() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(
+            client
+                .try_update_label(&owner, &id, &str(&env, &"a".repeat(128)))
+                .unwrap(),
+            Ok(())
+        );
+    }
+
+    // ── Feature B: get_active_alerts_for_contract ─────────────────────────────
+
+    // 23. Happy path — only active alerts are returned
+    #[test]
+    fn test_get_active_alerts_for_contract_filters_inactive() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Active"),
+            &str(&env, "h1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let _id2 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Inactive"),
+            &str(&env, "h2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        // Deactivate the second alert
+        client.update_alert(&owner, &_id2, &vec![&env, str(&env, "rule:mint")], &false);
+
+        let all = client.get_alerts_for_contract(&target);
+        assert_eq!(all.len(), 2);
+
+        let active = client.get_active_alerts_for_contract(&target);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active.get(0).unwrap().label, str(&env, "Active"));
+        let _ = id1;
+    }
+
+    // 24. get_active_alerts_for_contract — returns empty when all are inactive
+    #[test]
+    fn test_get_active_alerts_for_contract_all_inactive() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        client.update_alert(&owner, &id, &vec![&env, str(&env, "rule:transfer")], &false);
+
+        let active = client.get_active_alerts_for_contract(&target);
+        assert_eq!(active.len(), 0);
+    }
+
+    // 25. get_active_alerts_for_contract — returns empty for unknown contract
+    #[test]
+    fn test_get_active_alerts_for_contract_empty() {
+        let (env, client) = setup();
+        let target = Address::generate(&env);
+        assert_eq!(client.get_active_alerts_for_contract(&target).len(), 0);
+    }
+
+    // 26. get_active_alerts_for_contract — all active alerts are returned
+    #[test]
+    fn test_get_active_alerts_for_contract_all_active() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A1"),
+            &str(&env, "h1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A2"),
+            &str(&env, "h2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        let active = client.get_active_alerts_for_contract(&target);
+        assert_eq!(active.len(), 2);
     }
 }
