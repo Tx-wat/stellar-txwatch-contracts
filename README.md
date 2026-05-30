@@ -116,7 +116,15 @@ stellar contract invoke \
 ### Invoking Contracts (JavaScript SDK)
 
 ```js
-import { Contract, SorobanRpc, TransactionBuilder, Networks, BASE_FEE } from "@stellar/stellar-sdk";
+import {
+  Contract,
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  nativeToScVal,
+  Address,
+} from "@stellar/stellar-sdk";
 
 const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
 const contract = new Contract("<ALERT_REGISTRY_CONTRACT_ID>");
@@ -130,7 +138,11 @@ const tx = new TransactionBuilder(account, {
   .addOperation(
     contract.call(
       "register_alert",
-      // args built with xdr helpers — see stellar-sdk docs
+      new Address(ownerKeypair.publicKey()).toScVal(),          // owner
+      new Address("<WATCHED_CONTRACT_ADDRESS>").toScVal(),      // target_contract
+      nativeToScVal("My Alert", { type: "string" }),            // label
+      nativeToScVal("<sha256-of-webhook-url>", { type: "string" }), // webhook_hash
+      nativeToScVal(["rule:transfer", "rule:mint"], { type: "array", element: { type: "string" } }), // rules
     )
   )
   .setTimeout(30)
@@ -139,6 +151,7 @@ const tx = new TransactionBuilder(account, {
 const preparedTx = await server.prepareTransaction(tx);
 preparedTx.sign(ownerKeypair);
 const result = await server.sendTransaction(preparedTx);
+console.log("Transaction hash:", result.hash);
 ```
 
 ### Invoking Contracts (Rust SDK)

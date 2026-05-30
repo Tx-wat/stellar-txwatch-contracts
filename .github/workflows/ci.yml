@@ -44,3 +44,10 @@ jobs:
       # Issue #101 — Formatting check
       - name: Format check
         run: cargo fmt --check
+
+      # Issue #105 — Dependency vulnerability scanning
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Cargo audit
+        run: cargo audit
