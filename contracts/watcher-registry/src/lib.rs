@@ -97,8 +97,11 @@ impl WatcherRegistry {
     }
 
     /// Check if an address is an authorized watcher.
+    ///
+    /// Renamed from `is_authorized` for clarity in cross-contract call contexts —
+    /// the name now makes explicit *what* the address is being authorized as.
     #[must_use]
-    pub fn is_authorized(env: Env, watcher: Address) -> bool {
+    pub fn is_watcher_authorized(env: Env, watcher: Address) -> bool {
         let watchers = Self::load_watchers(&env);
         for i in 0..watchers.len() {
             if watchers.get(i).unwrap() == watcher {
@@ -185,16 +188,16 @@ mod tests {
 
     // 1. Happy path — register and check authorization
     #[test]
-    fn test_register_and_is_authorized() {
+    fn test_register_and_is_watcher_authorized() {
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        assert!(!client.is_authorized(&watcher));
+        assert!(!client.is_watcher_authorized(&watcher));
         assert_eq!(
             client.try_register_watcher(&admin, &watcher).unwrap(),
             Ok(())
         );
-        assert!(client.is_authorized(&watcher));
+        assert!(client.is_watcher_authorized(&watcher));
     }
 
     #[test]
@@ -216,7 +219,7 @@ mod tests {
 
         client.try_register_watcher(&admin, &watcher).unwrap();
         assert_eq!(client.try_remove_watcher(&admin, &watcher).unwrap(), Ok(()));
-        assert!(!client.is_authorized(&watcher));
+        assert!(!client.is_watcher_authorized(&watcher));
     }
 
     // 3. Happy path — transfer admin
@@ -236,7 +239,7 @@ mod tests {
             client.try_register_watcher(&new_admin, &watcher).unwrap(),
             Ok(())
         );
-        assert!(client.is_authorized(&watcher));
+        assert!(client.is_watcher_authorized(&watcher));
     }
 
     // 4. Unauthorized register rejected
@@ -334,9 +337,9 @@ mod tests {
         client.try_register_watcher(&admin, &w3).unwrap();
 
         assert_eq!(client.get_watchers().len(), 3);
-        assert!(client.is_authorized(&w1));
-        assert!(client.is_authorized(&w2));
-        assert!(client.is_authorized(&w3));
+        assert!(client.is_watcher_authorized(&w1));
+        assert!(client.is_watcher_authorized(&w2));
+        assert!(client.is_watcher_authorized(&w3));
     }
 
     // 10. get_admin returns correct admin
