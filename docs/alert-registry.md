@@ -253,7 +253,21 @@ Retrieves a single alert config by ID.
 
 ### `get_alerts_for_contract`
 
-Returns all alert configs registered for a given target contract.
+Returns all alert configs registered for a given target contract, including both active and inactive entries. Use [`get_active_alerts_for_contract`](#get_active_alerts_for_contract) to filter to active-only.
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `target_contract` | `Address` | Contract address to query |
+
+**Returns:** `Vec<AlertConfig>` — may be empty.
+
+---
+
+### `get_active_alerts_for_contract`
+
+Returns only the active alert configs (`active == true`) registered for a given target contract. Inactive alerts are excluded.
 
 If a `WatcherRegistry` is configured (via `set_watcher_registry`), `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
 
@@ -285,6 +299,28 @@ If a `WatcherRegistry` is configured, `querier` must be a registered watcher or 
 
 ---
 
+### `update_label`
+
+Updates only the label of an existing alert, leaving `rules` and `webhook_hash` unchanged. Use this to rename an alert without touching its configuration.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | ID of the alert to update |
+| `label` | `String` | New human-readable label (max 128 bytes) |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+
+**Panics:** if `label` exceeds 128 bytes.
+
+---
+
 ### `update_webhook`
 
 Updates the webhook hash for an existing alert. Use this to rotate webhook URLs without re-registering. Only the original owner may call this.
@@ -299,9 +335,10 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 | `config_id` | `u64` | ID of the alert to update |
 | `webhook_hash` | `String` | New hashed webhook URL |
 
-**Returns:** nothing
+**Returns:** `Result<(), ContractError>`
 
-**Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+
 ---
 
 ### `get_contract_alerts_paginated`
