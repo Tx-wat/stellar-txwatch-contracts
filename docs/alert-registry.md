@@ -135,7 +135,7 @@ Updates the rules and active status of an existing alert. Only the original owne
 
 **Returns:** nothing
 
-**Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
+**Errors:** Returns `ContractError::AlertNotFound` if ID does not exist; `ContractError::Unauthorized` if caller is not the owner.
 
 ---
 ### `initialize`
@@ -233,7 +233,7 @@ Permanently removes an alert config. Only the original owner may call this.
 
 **Returns:** nothing
 
-**Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
+**Errors:** Returns `ContractError::AlertNotFound` if ID does not exist; `ContractError::Unauthorized` if caller is not the owner.
 
 ---
 
