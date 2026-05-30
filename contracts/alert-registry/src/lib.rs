@@ -1089,4 +1089,14 @@ mod tests {
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
+
+    // 18. get_admin panics with NotInitialized when contract is not initialized
+    #[test]
+    #[should_panic]
+    fn test_get_admin_not_initialized() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        client.get_admin();
+    }
 }
