@@ -339,6 +339,25 @@ mod tests {
         assert!(client.is_authorized(&w3));
     }
 
+    // 9b. Register 3 watchers, remove all 3, verify empty list
+    #[test]
+    fn test_remove_all_watchers_returns_empty() {
+        let (env, admin, client) = setup();
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+        let w3 = Address::generate(&env);
+
+        client.try_register_watcher(&admin, &w1).unwrap();
+        client.try_register_watcher(&admin, &w2).unwrap();
+        client.try_register_watcher(&admin, &w3).unwrap();
+        assert_eq!(client.get_watchers().len(), 3);
+
+        client.try_remove_watcher(&admin, &w1).unwrap();
+        client.try_remove_watcher(&admin, &w2).unwrap();
+        client.try_remove_watcher(&admin, &w3).unwrap();
+        assert_eq!(client.get_watchers().len(), 0);
+    }
+
     // 10. get_admin returns correct admin
     #[test]
     fn test_get_admin() {
