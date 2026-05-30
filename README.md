@@ -193,6 +193,32 @@ GET https://horizon-testnet.stellar.org/accounts/<CONTRACT_ID>/transactions
 
 Future versions will emit `soroban_sdk::events` for real-time indexing.
 
+## TypeScript Bindings
+
+TypeScript bindings for `WatcherRegistry` are published to npm and generated
+automatically from the compiled WASM on every release using
+`stellar contract bindings typescript`.
+
+```bash
+npm install @tx-wat/watcher-registry @stellar/stellar-sdk
+```
+
+```typescript
+import { Client, networks } from "@tx-wat/watcher-registry";
+
+const client = new Client({
+  contractId: networks.testnet.contractId,
+  networkPassphrase: networks.testnet.networkPassphrase,
+  rpcUrl: networks.testnet.rpcUrl,
+});
+
+const authorized = await client.is_authorized({ watcher: "GABC...XYZ" });
+console.log(authorized.result); // true | false
+```
+
+See [bindings/watcher-registry/README.md](bindings/watcher-registry/README.md)
+for the full API reference and usage examples.
+
 ## Deployed Addresses
 
 See [DEPLOYMENTS.md](DEPLOYMENTS.md).
@@ -201,6 +227,7 @@ See [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 - [Alert Registry function reference](docs/alert-registry.md)
 - [Watcher Registry function reference](docs/watcher-registry.md)
+- [Ecosystem submission guide](docs/ecosystem-submission.md)
 
 ## Contributing
 
