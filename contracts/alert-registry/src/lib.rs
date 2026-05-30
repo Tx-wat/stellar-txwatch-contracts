@@ -194,7 +194,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -232,13 +232,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +247,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -368,6 +360,51 @@ impl AlertRegistry {
     ) -> Vec<AlertConfig> {
         let ids = Self::owner_index(&env, &owner);
         Self::configs_paginated(&env, &ids, offset, limit)
+    }
+
+    /// Return all alert configs whose `updated_at` timestamp is greater than or
+    /// equal to `since`.
+    ///
+    /// This enables efficient **incremental sync** for watcher nodes: on each
+    /// polling cycle a watcher passes the ledger timestamp of its last sync and
+    /// receives only the alerts that have been created or modified since then,
+    /// rather than fetching the entire registry.
+    ///
+    /// # Arguments
+    /// * `since` - Ledger timestamp (inclusive lower bound). Pass `0` to
+    ///   retrieve every alert that is currently stored.
+    ///
+    /// # Returns
+    /// A `Vec<AlertConfig>` containing every live alert with
+    /// `updated_at >= since`. Alerts that have been removed (and whose storage
+    /// entry has therefore expired) are silently omitted.
+    ///
+    /// # Note
+    /// The function scans all IDs from `0` up to the current `NEXT_ID`
+    /// counter. This is acceptable for the expected registry sizes on Soroban
+    /// and avoids the need for a separate timestamp index. For very large
+    /// registries consider combining this with the paginated variants.
+    #[must_use]
+    pub fn get_alerts_modified_since(env: Env, since: u64) -> Vec<AlertConfig> {
+        let total: u64 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("NEXT_ID"))
+            .unwrap_or(0u64);
+
+        let mut out: Vec<AlertConfig> = vec![&env];
+        for id in 0..total {
+            if let Some(cfg) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, AlertConfig>(&DataKey::Alert(id))
+            {
+                if cfg.updated_at >= since {
+                    out.push_back(cfg);
+                }
+            }
+        }
+        out
     }
 
     /// Get the total number of alerts ever registered.
@@ -1088,5 +1125,108 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // ── get_alerts_modified_since ─────────────────────────────────────────────
+
+    // 18. Returns all alerts when since == 0
+    #[test]
+    fn test_get_alerts_modified_since_zero_returns_all() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+
+        let results = client.get_alerts_modified_since(&0u64);
+        assert_eq!(results.len(), 2);
+    }
+
+    // 19. Returns empty vec when no alerts exist
+    #[test]
+    fn test_get_alerts_modified_since_empty_registry() {
+        let (_env, client) = setup();
+        let results = client.get_alerts_modified_since(&0u64);
+        assert_eq!(results.len(), 0);
+    }
+
+    // 20. Filters out alerts whose updated_at is before `since`
+    #[test]
+    fn test_get_alerts_modified_since_filters_old_alerts() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Register at ledger timestamp 0 (default in tests)
+        let _id1 = client.register_alert(&owner, &target, &str(&env, "Old"), &str(&env, "h"), &vec![&env]);
+
+        // Advance the ledger timestamp so the next alert has a higher updated_at
+        env.ledger().with_mut(|li| li.timestamp = 1000);
+
+        let _id2 = client.register_alert(&owner, &target, &str(&env, "New"), &str(&env, "h"), &vec![&env]);
+
+        // Query with since = 1000 — should only return the second alert
+        let results = client.get_alerts_modified_since(&1000u64);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap().label, str(&env, "New"));
+    }
+
+    // 21. An updated alert appears in a subsequent incremental sync
+    #[test]
+    fn test_get_alerts_modified_since_includes_updated_alert() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Register both alerts at timestamp 0
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        let _id2 = client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+
+        // Advance time and update the first alert
+        env.ledger().with_mut(|li| li.timestamp = 500);
+        client.update_alert(&owner, &id1, &vec![&env], &false);
+
+        // Incremental sync from timestamp 500 should return only the updated alert
+        let results = client.get_alerts_modified_since(&500u64);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap().label, str(&env, "A"));
+    }
+
+    // 22. Removed alerts are not returned
+    #[test]
+    fn test_get_alerts_modified_since_excludes_removed_alerts() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+
+        client.remove_alert(&owner, &id1);
+
+        // Only the surviving alert should be returned
+        let results = client.get_alerts_modified_since(&0u64);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results.get(0).unwrap().label, str(&env, "B"));
+    }
+
+    // 23. since is exclusive of nothing — boundary value exactly equal is included
+    #[test]
+    fn test_get_alerts_modified_since_boundary_inclusive() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        env.ledger().with_mut(|li| li.timestamp = 42);
+        client.register_alert(&owner, &target, &str(&env, "Boundary"), &str(&env, "h"), &vec![&env]);
+
+        // since == updated_at should be inclusive
+        let results = client.get_alerts_modified_since(&42u64);
+        assert_eq!(results.len(), 1);
+
+        // since == updated_at + 1 should exclude it
+        let results_after = client.get_alerts_modified_since(&43u64);
+        assert_eq!(results_after.len(), 0);
     }
 }

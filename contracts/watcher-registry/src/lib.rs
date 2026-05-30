@@ -122,9 +122,8 @@ impl WatcherRegistry {
     ) -> Result<(), ContractError> {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
-        // Transfer replaces the admin set with a single new admin
-        let admins: Vec<Address> = vec![&env, new_admin];
-        env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
+        // Overwrite the single admin entry so the old admin loses all privileges.
+        env.storage().instance().set(&symbol_short!("ADMIN"), &new_admin);
         Ok(())
     }
 
@@ -388,5 +387,50 @@ mod tests {
                 .unwrap(),
             ContractError::Unauthorized
         );
+    }
+
+    // 13. After transfer_admin, original admin cannot register watchers
+    //     and new admin can — full security handoff verification.
+    #[test]
+    fn test_transfer_admin_original_admin_cannot_register_watchers() {
+        let (env, original_admin, client) = setup();
+        let new_admin = Address::generate(&env);
+        let watcher_a = Address::generate(&env);
+        let watcher_b = Address::generate(&env);
+
+        // Transfer admin to new_admin
+        assert_eq!(
+            client.try_transfer_admin(&original_admin, &new_admin).unwrap(),
+            Ok(())
+        );
+
+        // Original admin is now rejected when attempting to register a watcher
+        assert_eq!(
+            client
+                .try_register_watcher(&original_admin, &watcher_a)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized,
+            "original admin must not be able to register watchers after transfer"
+        );
+
+        // Original admin is also rejected when attempting to remove a watcher
+        // (pre-register one via new_admin first so there is something to remove)
+        client.try_register_watcher(&new_admin, &watcher_b).unwrap();
+        assert_eq!(
+            client
+                .try_remove_watcher(&original_admin, &watcher_b)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized,
+            "original admin must not be able to remove watchers after transfer"
+        );
+
+        // New admin can still register and remove watchers normally
+        assert_eq!(
+            client.try_register_watcher(&new_admin, &watcher_a).unwrap(),
+            Ok(())
+        );
+        assert!(client.is_authorized(&watcher_a));
     }
 }
