@@ -1122,4 +1122,40 @@ mod tests {
         let client = AlertRegistryClient::new(&env, &contract_id);
         client.get_admin();
     }
+
+    // 19. Alert can be deactivated and reactivated via update_alert
+    #[test]
+    fn test_alert_deactivate_reactivate() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        // deactivate
+        assert_eq!(
+            client
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &false)
+                .unwrap(),
+            Ok(())
+        );
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(!cfg.active);
+
+        // reactivate
+        assert_eq!(
+            client
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &true)
+                .unwrap(),
+            Ok(())
+        );
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(cfg.active);
+    }
 }
