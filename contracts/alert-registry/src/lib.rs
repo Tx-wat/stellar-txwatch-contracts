@@ -221,6 +221,64 @@ impl AlertRegistry {
         Ok(())
     }
 
+    /// Deactivate all alerts owned by the caller in a single transaction.
+    ///
+    /// Useful for emergency shutdowns where an owner needs to quickly silence
+    /// all their alerts without making individual `update_alert` calls.
+    ///
+    /// Skips alert IDs that no longer exist in storage (removed or expired).
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `owner`.
+    ///
+    /// # Returns
+    /// The number of alerts that were deactivated.
+    pub fn deactivate_all_alerts(env: Env, owner: Address) -> u32 {
+        owner.require_auth();
+
+        let ids = Self::owner_index(&env, &owner);
+        let now = env.ledger().timestamp();
+        let mut count: u32 = 0;
+
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if !env.storage().persistent().has(&DataKey::Alert(id)) {
+                continue;
+            }
+
+            let mut config: AlertConfig = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Alert(id))
+                .unwrap();
+
+            config.active = false;
+            config.updated_at = now;
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Alert(id), &config);
+            env.storage().persistent().extend_ttl(&DataKey::Alert(id), 100, 100);
+            env.storage().persistent().set(&DataKey::AlertActive(id), &false);
+            env.storage().persistent().extend_ttl(&DataKey::AlertActive(id), 100, 100);
+
+            count += 1;
+        }
+
+        if count > 0 {
+            env.storage()
+                .persistent()
+                .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        }
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("deact_all")),
+            (owner, count),
+        );
+
+        count
+    }
+
     /// Remove an alert config from storage.
     ///
     /// Also removes the alert ID from the owner and contract indexes.
@@ -1176,5 +1234,118 @@ mod tests {
         assert_eq!(client.get_alert_active(&id), Some(true));
         client.remove_alert(&owner, &id);
         assert!(client.get_alert_active(&id).is_none());
+    }
+
+    // 22. deactivate_all_alerts returns 0 when owner has no alerts
+    #[test]
+    fn test_deactivate_all_alerts_empty() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+
+        assert_eq!(client.deactivate_all_alerts(&owner), 0);
+    }
+
+    // 23. deactivate_all_alerts deactivates all alerts for the owner
+    #[test]
+    fn test_deactivate_all_alerts_multiple() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 1"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 2"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+        let id3 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 3"),
+            &str(&env, "hash3"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        assert_eq!(client.get_alert_active(&id1), Some(true));
+        assert_eq!(client.get_alert_active(&id2), Some(true));
+        assert_eq!(client.get_alert_active(&id3), Some(true));
+
+        let count = client.deactivate_all_alerts(&owner);
+        assert_eq!(count, 3);
+
+        assert_eq!(client.get_alert_active(&id1), Some(false));
+        assert_eq!(client.get_alert_active(&id2), Some(false));
+        assert_eq!(client.get_alert_active(&id3), Some(false));
+    }
+
+    // 24. deactivate_all_alerts only affects the calling owner's alerts
+    #[test]
+    fn test_deactivate_all_alerts_other_owner_unaffected() {
+        let (env, client) = setup();
+        let owner1 = Address::generate(&env);
+        let owner2 = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner1,
+            &target,
+            &str(&env, "Owner1 Alert"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner2,
+            &target,
+            &str(&env, "Owner2 Alert"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        let count = client.deactivate_all_alerts(&owner1);
+        assert_eq!(count, 1);
+
+        assert_eq!(client.get_alert_active(&id1), Some(false));
+        assert_eq!(client.get_alert_active(&id2), Some(true));
+    }
+
+    // 25. deactivate_all_alerts skips removed alerts and deactivates remaining
+    #[test]
+    fn test_deactivate_all_alerts_after_removal() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 1"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 2"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        client.remove_alert(&owner, &id1);
+
+        let count = client.deactivate_all_alerts(&owner);
+        assert_eq!(count, 1);
+
+        // id1 is gone
+        assert!(client.get_alert(&id1).is_none());
+        // id2 is now inactive
+        assert_eq!(client.get_alert_active(&id2), Some(false));
     }
 }
