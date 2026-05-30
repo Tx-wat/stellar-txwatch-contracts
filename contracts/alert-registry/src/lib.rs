@@ -194,7 +194,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -232,13 +232,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &config.owner, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +247,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -1088,5 +1080,44 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 18. get_alerts_by_owner_paginated — basic pagination
+    #[test]
+    fn test_get_alerts_by_owner_paginated() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for label in ["A", "B", "C", "D", "E"] {
+            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+        }
+
+        // first page
+        let page1 = client.get_alerts_by_owner_paginated(&owner, &0u32, &3u32);
+        assert_eq!(page1.len(), 3);
+
+        // second page
+        let page2 = client.get_alerts_by_owner_paginated(&owner, &3u32, &3u32);
+        assert_eq!(page2.len(), 2);
+
+        // offset beyond length returns empty
+        let empty = client.get_alerts_by_owner_paginated(&owner, &10u32, &3u32);
+        assert_eq!(empty.len(), 0);
+    }
+
+    // 19. get_contract_alerts_paginated — basic pagination
+    #[test]
+    fn test_get_contract_alerts_paginated() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for label in ["A", "B", "C", "D"] {
+            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+        }
+
+        let page = client.get_contract_alerts_paginated(&target, &1u32, &2u32);
+        assert_eq!(page.len(), 2);
     }
 }
