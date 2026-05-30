@@ -1089,4 +1089,96 @@ mod tests {
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
+
+    // 18. updated_at is strictly greater than created_at after update_alert
+    //
+    // The Soroban test environment starts with timestamp 0 and does not
+    // advance automatically. We manually bump the ledger timestamp by 1
+    // second between registration and update so that the contract's
+    // `env.ledger().timestamp()` call inside `update_alert` returns a
+    // value that is strictly greater than the one captured at registration.
+    #[test]
+    fn test_updated_at_strictly_greater_than_created_at() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Register at timestamp T (default = 0).
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Timestamp Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        let before = client.get_alert(&id).unwrap();
+        assert_eq!(
+            before.created_at, before.updated_at,
+            "created_at and updated_at should be equal right after registration"
+        );
+
+        // Advance the ledger clock by 1 second so the update lands at T+1.
+        env.ledger().with_mut(|li| {
+            li.timestamp += 1;
+        });
+
+        client
+            .update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &true)
+            .unwrap();
+
+        let after = client.get_alert(&id).unwrap();
+        assert!(
+            after.updated_at > after.created_at,
+            "updated_at ({}) must be strictly greater than created_at ({})",
+            after.updated_at,
+            after.created_at
+        );
+    }
+
+    // 19. Register an alert with exactly 50 valid rule strings.
+    //
+    // This verifies that the contract handles the maximum allowed rule count
+    // without hitting Soroban instruction limits. We alternate between the
+    // two valid rule descriptors ("rule:transfer" and "rule:mint") to fill
+    // all 50 slots, then confirm every entry is stored correctly.
+    #[test]
+    fn test_register_alert_with_50_rules_no_instruction_limit() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        // Build a vec of 50 valid rules, alternating between the two
+        // accepted descriptors so the list is realistic.
+        let mut rules: Vec<String> = vec![&env];
+        for i in 0..50u32 {
+            let rule = if i % 2 == 0 {
+                str(&env, "rule:transfer")
+            } else {
+                str(&env, "rule:mint")
+            };
+            rules.push_back(rule);
+        }
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Bulk Rules Alert"),
+            &str(&env, "hash"),
+            &rules,
+        );
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(
+            cfg.rules.len(),
+            50,
+            "all 50 rules should be persisted"
+        );
+
+        // Spot-check a few entries to confirm data integrity.
+        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:transfer"));
+        assert_eq!(cfg.rules.get(1).unwrap(), str(&env, "rule:mint"));
+        assert_eq!(cfg.rules.get(48).unwrap(), str(&env, "rule:transfer"));
+        assert_eq!(cfg.rules.get(49).unwrap(), str(&env, "rule:mint"));
+    }
 }
