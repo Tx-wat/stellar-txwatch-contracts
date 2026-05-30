@@ -36,16 +36,11 @@ impl WatcherRegistry {
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
         admin.require_auth();
 
-        if env
-            .storage()
-            .instance()
-            .has(&symbol_short!("ADMIN"))
-        {
+        if env.storage().instance().has(&DataKey::Admins) {
             return Err(ContractError::AlreadyInitialized);
         }
-        env.storage()
-            .instance()
-            .set(&symbol_short!("ADMIN"), &admin);
+        let admins: Vec<Address> = vec![&env, admin];
+        env.storage().instance().set(&DataKey::Admins, &admins);
         Ok(())
     }
 
@@ -65,9 +60,7 @@ impl WatcherRegistry {
             }
         }
         watchers.push_back(watcher.clone());
-        env.storage()
-            .instance()
-            .set(&symbol_short!("WATCHERS"), &watchers);
+        env.storage().instance().set(&DataKey::Watchers, &watchers);
 
         env.events().publish(
             (symbol_short!("watcher"), symbol_short!("register")),
@@ -90,9 +83,7 @@ impl WatcherRegistry {
                 updated.push_back(w);
             }
         }
-        env.storage()
-            .instance()
-            .set(&symbol_short!("WATCHERS"), &updated);
+        env.storage().instance().set(&DataKey::Watchers, &updated);
         Ok(())
     }
 
@@ -124,16 +115,15 @@ impl WatcherRegistry {
         Self::assert_admin(&env, &admin)?;
         // Transfer replaces the admin set with a single new admin
         let admins: Vec<Address> = vec![&env, new_admin];
-        env.storage().instance().set(&symbol_short!("ADMINS"), &admins);
+        env.storage().instance().set(&DataKey::Admins, &admins);
         Ok(())
     }
 
     /// Get the current admin address.
     #[must_use]
     pub fn get_admin(env: Env) -> Result<Address, ContractError> {
-        env.storage()
-            .instance()
-            .get(&symbol_short!("ADMIN"))
+        Self::load_admins(&env)
+            .first()
             .ok_or(ContractError::NotInitialized)
     }
 
@@ -143,15 +133,14 @@ impl WatcherRegistry {
     fn load_watchers(env: &Env) -> Vec<Address> {
         env.storage()
             .instance()
-            .get(&symbol_short!("WATCHERS"))
+            .get(&DataKey::Watchers)
             .unwrap_or_else(|| vec![env])
     }
 
     fn load_admins(env: &Env) -> Vec<Address> {
         env.storage()
             .instance()
-            .get(&symbol_short!("ADMIN"))
-            .map(|admin: Address| vec![env, admin])
+            .get(&DataKey::Admins)
             .unwrap_or_else(|| vec![env])
     }
 
