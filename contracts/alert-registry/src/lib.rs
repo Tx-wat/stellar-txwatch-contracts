@@ -97,9 +97,8 @@ impl AlertRegistry {
             panic!("label exceeds 128 bytes");
         }
 
-        if rules.len() > 50 {
-            panic!("too many rules: maximum is 50");
-        }
+        Self::validate_rules(&env, &rules);
+        Self::assert_per_owner_limit(&env, &owner);
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
@@ -194,7 +193,7 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         config.webhook_hash = webhook_hash;
         config.updated_at = env.ledger().timestamp();
@@ -232,13 +231,13 @@ impl AlertRegistry {
             .get(&DataKey::Alert(config_id))
             .ok_or(ContractError::AlertNotFound)?;
 
-        Self::assert_owner(&config, &owner)?;
+        Self::assert_owner(&config, &caller)?;
 
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
 
-        Self::remove_from_owner_index(&env, &owner, config_id);
+        Self::remove_from_owner_index(&env, &caller, config_id);
         Self::remove_from_contract_index(&env, &config.target_contract, config_id);
 
         env.events().publish(
@@ -247,14 +246,6 @@ impl AlertRegistry {
         );
 
         Ok(())
-    }
-
-    fn assert_owner(config: &AlertConfig, owner: &Address) -> Result<(), ContractError> {
-        if config.owner == *owner {
-            Ok(())
-        } else {
-            Err(ContractError::Unauthorized)
-        }
     }
 
     /// Retrieve a single alert config by its ID.
@@ -286,11 +277,11 @@ impl AlertRegistry {
     }
 
     /// Get the current admin address.
-    pub fn get_admin(env: Env) -> Address {
+    pub fn get_admin(env: Env) -> Result<Address, ContractError> {
         env.storage()
             .instance()
             .get(&symbol_short!("ADMIN"))
-            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized))
+            .ok_or(ContractError::NotInitialized)
     }
 
     /// Set a per-owner active alert limit (admin only). A value of `0` means no limit.
@@ -424,7 +415,11 @@ impl AlertRegistry {
     }
 
     fn assert_per_owner_limit(env: &Env, owner: &Address) {
-        let limit = Self::get_per_owner_alert_limit(env);
+        let limit: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("LIMIT"))
+            .unwrap_or(0u32);
         if limit > 0 && Self::get_active_alert_count(env.clone(), owner.clone()) >= limit {
             panic!("owner alert limit exceeded");
         }
@@ -620,12 +615,25 @@ mod tests {
     fn setup() -> (Env, AlertRegistryClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, AlertRegistry);
+        let contract_id = env.register(AlertRegistry, ());
         let client = AlertRegistryClient::new(&env, &contract_id);
         (env, client)
     }
 
     fn str(env: &Env, s: &str) -> String {
+        String::from_str(env, s)
+    }
+
+    /// Build a Soroban String of `n` repetitions of ASCII char `ch`.
+    /// Uses a fixed 8192-byte stack buffer — sufficient for the Soroban max.
+    fn str_repeat(env: &Env, ch: char, n: usize) -> String {
+        assert!(n <= 8192, "str_repeat: n exceeds Soroban String max");
+        let byte = ch as u8;
+        let mut buf = [0u8; 8192];
+        for b in buf.iter_mut().take(n) {
+            *b = byte;
+        }
+        let s = core::str::from_utf8(&buf[..n]).unwrap();
         String::from_str(env, s)
     }
 
@@ -662,19 +670,19 @@ mod tests {
             &target,
             &str(&env, "Alert"),
             &str(&env, "hash"),
-            &vec![&env, str(&env, "rule:a")],
+            &vec![&env, str(&env, "rule:transfer")],
         );
 
         assert_eq!(
             client
-                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:b")], &false)
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &false)
                 .unwrap(),
             Ok(())
         );
 
         let cfg = client.get_alert(&id).unwrap();
         assert!(!cfg.active);
-        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:b"));
+        assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:mint"));
     }
 
     // 3. Happy path — remove alert
@@ -759,7 +767,7 @@ mod tests {
     fn test_admin_remove_any_alert() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -771,7 +779,7 @@ mod tests {
             &vec![&env, str(&env, "rule:mint")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&admin, &id), Ok(()));
+        assert_eq!(client.remove_alert_by_admin(&admin, &id), ());
         assert!(client.get_alert(&id).is_none());
     }
 
@@ -780,8 +788,8 @@ mod tests {
     fn test_admin_set_per_owner_alert_limit() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
-        client.set_per_owner_alert_limit(&admin, &1u32).unwrap();
+        client.initialize(&admin);
+        client.set_per_owner_alert_limit(&admin, &1u32);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -806,10 +814,10 @@ mod tests {
     fn test_admin_transfer_admin() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
 
-        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
+        assert_eq!(client.transfer_admin(&admin, &new_admin), ());
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
         let id = client.register_alert(
@@ -820,7 +828,7 @@ mod tests {
             &vec![&env, str(&env, "rule:transfer")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&new_admin, &id), Ok(()));
+        assert_eq!(client.remove_alert_by_admin(&new_admin, &id), ());
     }
 
     // 5. Unauthorized remove rejected
@@ -1019,7 +1027,7 @@ mod tests {
 
         let mut rules: Vec<String> = vec![&env];
         for _ in 0..51u32 {
-            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            rules.push_back(str(&env, "rule"));
         }
         client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
     }
@@ -1042,7 +1050,7 @@ mod tests {
 
         let mut rules: Vec<String> = vec![&env];
         for _ in 0..51u32 {
-            rules.push_back(String::from_str(&env, &soroban_sdk::String::from_str(&env, "rule").to_string()));
+            rules.push_back(str(&env, "rule"));
         }
         client.update_alert(&owner, &id, &rules, &true);
     }
@@ -1055,8 +1063,8 @@ mod tests {
         let target = Address::generate(&env);
 
         let mut rules: Vec<String> = vec![&env];
-        for _ in 0..50u32 {
-            rules.push_back(str(&env, "rule"));
+        for i in 0..50u32 {
+            rules.push_back(str(&env, if i % 2 == 0 { "rule:transfer" } else { "rule:mint" }));
         }
         let id = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &rules);
         let cfg = client.get_alert(&id).unwrap();
@@ -1088,5 +1096,47 @@ mod tests {
         let target = Address::generate(&env);
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // ── Soroban string-length boundary tests ─────────────────────────────────
+    //
+    // Soroban's String type supports up to 8 192 bytes.  The contract enforces
+    // its own tighter 128-byte limit on `label`, so any string longer than 128
+    // bytes must be rejected by the contract guard long before the Soroban
+    // limit is reached.
+
+    // 18. Label of 8 192 bytes (Soroban max) is rejected by the app guard.
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_at_soroban_max_rejected_by_app_guard() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        // 8 192 bytes — the Soroban String ceiling.
+        let label = str_repeat(&env, 'a', 8192);
+        client.register_alert(&owner, &target, &label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 19. Label of 8 191 bytes (one below Soroban max) is also rejected by the
+    //     app guard — confirms the guard fires for any length > 128.
+    #[test]
+    #[should_panic(expected = "label exceeds 128 bytes")]
+    fn test_label_one_below_soroban_max_rejected_by_app_guard() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let label = str_repeat(&env, 'b', 8191);
+        client.register_alert(&owner, &target, &label, &str(&env, "hash"), &vec![&env]);
+    }
+
+    // 20. A Soroban String of exactly 8 192 bytes can be constructed without
+    //     panicking — the Soroban layer itself does not reject it.  The
+    //     contract's app-level guard is what rejects it (tested above).
+    #[test]
+    fn test_soroban_string_8192_bytes_is_constructible() {
+        let (env, _client) = setup();
+        // This must not panic — Soroban accepts strings up to 8 192 bytes.
+        let s = str_repeat(&env, 'x', 8192);
+        assert_eq!(s.len(), 8192);
     }
 }

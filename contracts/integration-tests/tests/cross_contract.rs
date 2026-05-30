@@ -1,23 +1,8 @@
-use alert_registry::{AlertRegistry, AlertRegistryClient};
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
-use watcher_registry::{WatcherRegistry, WatcherRegistryClient};
+use soroban_sdk::{testutils::Address as _, vec, Address};
+use test_utils::{setup_both as setup, str};
 
-fn setup() -> (
-    Env,
-    AlertRegistryClient<'static>,
-    WatcherRegistryClient<'static>,
-) {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let alert_id = env.register_contract(None, AlertRegistry);
-    let watcher_id = env.register_contract(None, WatcherRegistry);
-
-    let alert_client = AlertRegistryClient::new(&env, &alert_id);
-    let watcher_client = WatcherRegistryClient::new(&env, &watcher_id);
-
-    (env, alert_client, watcher_client)
-}
+// `setup_both` returns (env, alert_client, watcher_client) — same shape as the
+// old local `setup()` function, so all tests below compile unchanged.
 
 /// An authorized watcher can query AlertRegistry and see registered alerts.
 #[test]
@@ -37,9 +22,9 @@ fn test_authorized_watcher_can_query_alert_registry() {
     let id = alert_client.register_alert(
         &owner,
         &target,
-        &String::from_str(&env, "Cross-contract alert"),
-        &String::from_str(&env, "webhook-hash-abc"),
-        &vec![&env, String::from_str(&env, "rule:transfer")],
+        &str(&env, "Cross-contract alert"),
+        &str(&env, "webhook-hash-abc"),
+        &vec![&env, str(&env, "rule:transfer")],
     );
 
     // Verify the watcher is authorized
@@ -50,7 +35,7 @@ fn test_authorized_watcher_can_query_alert_registry() {
     assert_eq!(alerts.len(), 1);
     assert_eq!(
         alerts.get(0).unwrap().label,
-        String::from_str(&env, "Cross-contract alert")
+        str(&env, "Cross-contract alert")
     );
 
     let cfg = alert_client.get_alert(&id).unwrap();
@@ -88,8 +73,8 @@ fn test_removed_watcher_loses_authorization_alert_data_intact() {
     alert_client.register_alert(
         &owner,
         &target,
-        &String::from_str(&env, "Alert"),
-        &String::from_str(&env, "hash"),
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
         &vec![&env],
     );
 
