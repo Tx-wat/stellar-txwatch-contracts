@@ -823,6 +823,29 @@ mod tests {
         assert_eq!(client.remove_alert_by_admin(&new_admin, &id), Ok(()));
     }
 
+    #[test]
+    fn test_old_admin_rejected_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+
+        // first transfer succeeds
+        assert_eq!(
+            client.try_transfer_admin(&admin, &new_admin).unwrap(),
+            Ok(())
+        );
+
+        // old admin cannot call transfer_admin again
+        assert_eq!(
+            client
+                .try_transfer_admin(&admin, &new_admin)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
+    }
+
     // 5. Unauthorized remove rejected
     #[test]
     fn test_remove_unauthorized() {
