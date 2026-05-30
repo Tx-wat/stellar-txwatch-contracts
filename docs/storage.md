@@ -16,6 +16,8 @@ Source: `contracts/alert-registry/src/lib.rs`
 | `DataKey::OwnerIndex(addr: Address)` | Persistent | `Vec<u64>` | List of alert IDs owned by a given address |
 | `DataKey::ContractIndex(addr: Address)` | Persistent | `Vec<u64>` | List of alert IDs watching a given contract address |
 | `symbol_short!("NEXT_ID")` | Instance | `u64` | Monotonic counter used to generate unique alert IDs |
+| `symbol_short!("ADMIN")` | Instance | `Address` | Optional admin address that may remove alerts and set owner limits |
+| `symbol_short!("LIMIT")` | Instance | `u32` | Optional per-owner active alert limit |
 
 ### AlertConfig Fields
 
