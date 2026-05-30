@@ -263,39 +263,8 @@ Returns all alert configs registered for a given target contract.
 
 **Returns:** `Vec<AlertConfig>` — may be empty.
 
----
+> **Tip:** For large result sets, use [`get_contract_alerts_paginated`](#get_contract_alerts_paginated) with `offset`/`limit`.
 
-### `get_alerts_by_owner`
-
-Returns all alert configs owned by a given address.
-
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `owner` | `Address` | Owner address to query |
-
-**Returns:** `Vec<AlertConfig>` — may be empty.
-
----
-
-### `update_webhook`
-
-Updates the webhook hash for an existing alert. Use this to rotate webhook URLs without re-registering. Only the original owner may call this.
-
-**Requires auth:** `caller` (must match `owner` of the config)
-
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `caller` | `Address` | Must be the alert owner |
-| `config_id` | `u64` | ID of the alert to update |
-| `webhook_hash` | `String` | New hashed webhook URL |
-
-**Returns:** nothing
-
-**Panics:** `"alert not found"` if ID does not exist; `"unauthorized"` if caller is not the owner.
 ---
 
 ### `get_contract_alerts_paginated`
