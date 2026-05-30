@@ -255,13 +255,16 @@ Retrieves a single alert config by ID.
 
 Returns all alert configs registered for a given target contract.
 
+If a `WatcherRegistry` is configured (via `set_watcher_registry`), `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query (checked against watcher registry if configured) |
 | `target_contract` | `Address` | Contract address to query |
 
-**Returns:** `Vec<AlertConfig>` — may be empty.
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — `Ok(vec)` on success, may be empty.
 
 ---
 
@@ -269,13 +272,16 @@ Returns all alert configs registered for a given target contract.
 
 Returns all alert configs owned by a given address.
 
+If a `WatcherRegistry` is configured, `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query |
 | `owner` | `Address` | Owner address to query |
 
-**Returns:** `Vec<AlertConfig>` — may be empty.
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — `Ok(vec)` on success, may be empty.
 
 ---
 
@@ -302,15 +308,18 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 
 Returns a page of alert configs registered for a given target contract.
 
+If a `WatcherRegistry` is configured, `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query |
 | `target_contract` | `Address` | Contract address to query |
 | `offset` | `u32` | Number of results to skip |
 | `limit` | `u32` | Maximum number of results to return |
 
-**Returns:** `Vec<AlertConfig>` — may be empty.
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — may be empty.
 
 ---
 
@@ -318,15 +327,18 @@ Returns a page of alert configs registered for a given target contract.
 
 Returns a page of alert configs owned by a given address.
 
+If a `WatcherRegistry` is configured, `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query |
 | `owner` | `Address` | Owner address to query |
 | `offset` | `u32` | Number of results to skip |
 | `limit` | `u32` | Maximum number of results to return |
 
-**Returns:** `Vec<AlertConfig>` — may be empty.
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — may be empty.
 
 ---
 
@@ -340,11 +352,51 @@ Returns the total number of alerts ever registered (monotonic counter — does n
 
 ---
 
+### `set_watcher_registry`
+
+Configures the `WatcherRegistry` contract address used for optional watcher-gating on read queries. Once set, `get_alerts_for_contract`, `get_alerts_by_owner`, and their paginated variants will cross-call `WatcherRegistry::is_watcher_authorized` before returning data. Admin only.
+
+**Requires auth:** `admin`
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `admin` | `Address` | Current admin address |
+| `watcher_registry` | `Address` | Address of the deployed `WatcherRegistry` contract |
+
+**Returns:** nothing
+
+---
+
+### `get_watcher_registry`
+
+Returns the configured `WatcherRegistry` contract address, or `None` if watcher-gating has not been enabled.
+
+**Returns:** `Option<Address>`
+
+---
+
+## Errors
+
+| Variant | Code | Description |
+|---|---|---|
+| `Unauthorized` | 1 | Caller is not the owner or admin |
+| `AlertNotFound` | 2 | No alert exists for the given ID |
+| `AlreadyInitialized` | 3 | `initialize` was called more than once |
+| `NotInitialized` | 4 | Admin function called before `initialize` |
+| `NotAWatcher` | 5 | Watcher-gating is enabled and the querier is not a registered watcher |
+
+---
+
 ## Storage
 
 - Alert configs are stored in **persistent storage** under `DataKey::Alert(id)`.
 - Owner and contract indexes are stored in **persistent storage** under `DataKey::OwnerIndex` and `DataKey::ContractIndex`.
-- The auto-incrementing ID counter is stored in **instance storage**.
+- The auto-incrementing ID counter is stored in **instance storage** under `NEXT_ID`.
+- The optional admin address is stored in **instance storage** under `ADMIN`.
+- The optional per-owner alert limit is stored in **instance storage** under `LIMIT`.
+- The optional `WatcherRegistry` contract address is stored in **instance storage** under `WATCHREG`.
 
 ---
 
