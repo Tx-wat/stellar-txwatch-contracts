@@ -30,7 +30,12 @@ pub struct WatcherRegistry;
 #[contractimpl]
 impl WatcherRegistry {
     /// Initialize the registry with an admin address. Can only be called once.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `admin`.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+
         if env
             .storage()
             .instance()

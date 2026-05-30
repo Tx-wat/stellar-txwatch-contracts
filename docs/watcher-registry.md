@@ -10,6 +10,8 @@ Contract that stores authorized watcher node addresses on-chain. Only registered
 
 Initializes the registry with an admin address. Can only be called once.
 
+**Requires auth:** `admin`
+
 **Parameters**
 
 | Name | Type | Description |
