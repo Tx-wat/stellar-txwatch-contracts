@@ -1089,4 +1089,133 @@ mod tests {
         let max_label = str(&env, &"a".repeat(128));
         client.register_alert(&owner, &target, &max_label, &str(&env, "hash"), &vec![&env]);
     }
+
+    // ── Auth-failure tests (no mock_all_auths) ────────────────────────────────
+
+    #[test]
+    #[should_panic]
+    fn test_register_alert_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "h"),
+            &vec![&env],
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_alert_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        // register with mocked auth first, then call update without auth
+        env.mock_all_auths();
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "h"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        env.set_auths(&[]);
+        client.update_alert(&owner, &id, &vec![&env], &false);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_update_webhook_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        env.mock_all_auths();
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "h"),
+            &vec![&env],
+        );
+        env.set_auths(&[]);
+        client.update_webhook(&owner, &id, &str(&env, "new-hash"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_remove_alert_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        env.mock_all_auths();
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "h"),
+            &vec![&env],
+        );
+        env.set_auths(&[]);
+        client.remove_alert(&owner, &id);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transfer_admin_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+        env.set_auths(&[]);
+        client.transfer_admin(&admin, &new_admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_per_owner_alert_limit_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        env.set_auths(&[]);
+        client.set_per_owner_alert_limit(&admin, &5u32);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_remove_alert_by_admin_requires_auth() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "h"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        env.set_auths(&[]);
+        client.remove_alert_by_admin(&admin, &id);
+    }
 }

@@ -389,4 +389,59 @@ mod tests {
             ContractError::Unauthorized
         );
     }
+
+    // ── Auth-failure tests (no mock_all_auths) ────────────────────────────────
+
+    #[test]
+    #[should_panic]
+    fn test_initialize_no_auth_panics() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        client.initialize(&admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_register_watcher_no_auth_panics() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let watcher = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        env.set_auths(&[]);
+        client.register_watcher(&admin, &watcher);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_remove_watcher_no_auth_panics() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let watcher = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        client.register_watcher(&admin, &watcher).unwrap();
+        env.set_auths(&[]);
+        client.remove_watcher(&admin, &watcher);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_transfer_admin_no_auth_panics() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, WatcherRegistry);
+        let client = WatcherRegistryClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        env.mock_all_auths();
+        client.initialize(&admin).unwrap();
+        env.set_auths(&[]);
+        client.transfer_admin(&admin, &new_admin);
+    }
 }

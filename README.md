@@ -154,6 +154,77 @@ const result = await server.sendTransaction(preparedTx);
 console.log("Transaction hash:", result.hash);
 ```
 
+```js
+import {
+  Contract,
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  Address,
+} from "@stellar/stellar-sdk";
+
+const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
+const contract = new Contract("<WATCHER_REGISTRY_CONTRACT_ID>");
+
+// Initialize the registry (one-time, admin only)
+const account = await server.getAccount(adminKeypair.publicKey());
+const initTx = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "initialize",
+      new Address(adminKeypair.publicKey()).toScVal(), // admin
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const preparedInit = await server.prepareTransaction(initTx);
+preparedInit.sign(adminKeypair);
+await server.sendTransaction(preparedInit);
+
+// Register a watcher node (admin only)
+const account2 = await server.getAccount(adminKeypair.publicKey());
+const registerTx = new TransactionBuilder(account2, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "register_watcher",
+      new Address(adminKeypair.publicKey()).toScVal(),   // admin
+      new Address("<WATCHER_NODE_ADDRESS>").toScVal(),   // watcher
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const preparedRegister = await server.prepareTransaction(registerTx);
+preparedRegister.sign(adminKeypair);
+await server.sendTransaction(preparedRegister);
+
+// Check if an address is an authorized watcher (read-only, no signature needed)
+const account3 = await server.getAccount(adminKeypair.publicKey());
+const checkTx = new TransactionBuilder(account3, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "is_authorized",
+      new Address("<WATCHER_NODE_ADDRESS>").toScVal(), // watcher
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const result = await server.simulateTransaction(checkTx);
+console.log("Is authorized:", result.result?.retval); // SCV_BOOL
+```
+
 ### Invoking Contracts (Rust SDK)
 
 ```rust
