@@ -2,7 +2,11 @@ use alert_registry::{AlertRegistry, AlertRegistryClient};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
 use watcher_registry::{WatcherRegistry, WatcherRegistryClient};
 
-fn setup() -> (Env, AlertRegistryClient<'static>, WatcherRegistryClient<'static>) {
+fn setup() -> (
+    Env,
+    AlertRegistryClient<'static>,
+    WatcherRegistryClient<'static>,
+) {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -44,7 +48,10 @@ fn test_authorized_watcher_can_query_alert_registry() {
     // Authorized watcher queries the alert registry
     let alerts = alert_client.get_alerts_for_contract(&target);
     assert_eq!(alerts.len(), 1);
-    assert_eq!(alerts.get(0).unwrap().label, String::from_str(&env, "Cross-contract alert"));
+    assert_eq!(
+        alerts.get(0).unwrap().label,
+        String::from_str(&env, "Cross-contract alert")
+    );
 
     let cfg = alert_client.get_alert(&id).unwrap();
     assert_eq!(cfg.owner, owner);
