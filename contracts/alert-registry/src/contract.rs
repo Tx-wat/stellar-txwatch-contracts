@@ -250,6 +250,22 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Return the count of live (non-removed) alert configs watching `target_contract`.
+    ///
+    /// Unlike [`get_alert_count`], this is scoped to a single watched contract and
+    /// reflects removals — it only counts entries that still exist in storage.
+    pub fn get_alert_count_for_contract(env: Env, target_contract: Address) -> u32 {
+        let ids = storage::contract_index(&env, &target_contract);
+        let mut count: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if storage::has_alert(&env, id) {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -309,4 +325,79 @@ fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: 
         (symbol_short!("alert"), symbol_short!("remove")),
         (config_id, caller.clone()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    fn setup() -> (Env, AlertRegistryClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AlertRegistry, ());
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        (env, client)
+    }
+
+    fn str(env: &Env, s: &str) -> String {
+        String::from_str(env, s)
+    }
+
+    fn register(client: &AlertRegistryClient, env: &Env, owner: &Address, target: &Address) -> u64 {
+        client.register_alert(
+            owner,
+            target,
+            &str(env, "alert"),
+            &str(env, "hash"),
+            &vec![env],
+        )
+    }
+
+    #[test]
+    fn test_count_zero_for_unknown_contract() {
+        let (env, client) = setup();
+        let target = Address::generate(&env);
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
+    }
+
+    #[test]
+    fn test_count_increments_on_register() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
+        register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 1u32);
+        register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 2u32);
+    }
+
+    #[test]
+    fn test_count_decrements_on_remove() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 1u32);
+        client.remove_alert(&owner, &id).unwrap();
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
+    }
+
+    #[test]
+    fn test_count_isolated_per_contract() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target_a = Address::generate(&env);
+        let target_b = Address::generate(&env);
+
+        register(&client, &env, &owner, &target_a);
+        register(&client, &env, &owner, &target_a);
+        register(&client, &env, &owner, &target_b);
+
+        assert_eq!(client.get_alert_count_for_contract(&target_a), 2u32);
+        assert_eq!(client.get_alert_count_for_contract(&target_b), 1u32);
+    }
 }
