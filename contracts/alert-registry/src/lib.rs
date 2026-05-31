@@ -2016,4 +2016,56 @@ mod tests {
             ContractError::Unauthorized
         );
     }
+
+    // 18. update_alert after remove_alert returns AlertNotFound
+    #[test]
+    fn test_update_alert_after_remove_returns_not_found() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.try_remove_alert(&owner, &id).unwrap(), Ok(()));
+
+        assert_eq!(
+            client
+                .try_update_alert(&owner, &id, &vec![&env], &false)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::AlertNotFound
+        );
+    }
+
+    // 19. update_webhook after remove_alert returns AlertNotFound
+    #[test]
+    fn test_update_webhook_after_remove_returns_not_found() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.try_remove_alert(&owner, &id).unwrap(), Ok(()));
+
+        assert_eq!(
+            client
+                .try_update_webhook(&owner, &id, &str(&env, "new-hash"))
+                .unwrap_err()
+                .unwrap(),
+            ContractError::AlertNotFound
+        );
+    }
 }
