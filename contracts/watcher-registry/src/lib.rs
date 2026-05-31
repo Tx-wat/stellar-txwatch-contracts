@@ -187,6 +187,8 @@ impl WatcherRegistry {
         watchers.push_back(watcher.clone());
         env.storage().instance().set(&DataKey::Watchers, &watchers);
 
+        Self::increment_watcher_count(&env);
+
         env.events().publish(
             (symbol_short!("watcher"), symbol_short!("register")),
             watcher,
@@ -206,10 +208,13 @@ impl WatcherRegistry {
 
         let watchers = Self::load_watchers(&env);
         let mut updated: Vec<Address> = vec![&env];
+        let mut removed = false;
         for i in 0..watchers.len() {
             let w = watchers.get(i).unwrap();
             if w != watcher {
                 updated.push_back(w);
+            } else {
+                removed = true;
             }
         }
         env.storage().instance().set(&DataKey::Watchers, &updated);
@@ -263,7 +268,41 @@ impl WatcherRegistry {
         Ok(admins.get(0).unwrap())
     }
 
+    /// Get the number of registered watchers as a cheap u32 read, avoiding
+    /// the cost of fetching and deserializing the full watcher list.
+    #[must_use]
+    pub fn get_watcher_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32)
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
+
+    fn increment_watcher_count(env: &Env) {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("W_CNT"), &(count + 1));
+    }
+
+    fn decrement_watcher_count(env: &Env) {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32);
+        if count > 0 {
+            env.storage()
+                .instance()
+                .set(&symbol_short!("W_CNT"), &(count - 1));
+        }
+    }
 
     /// Load the current watcher list from instance storage, or return an empty vec.
     fn load_watchers(env: &Env) -> Vec<Address> {

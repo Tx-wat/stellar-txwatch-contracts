@@ -13,6 +13,9 @@ mod types;
 pub enum DataKey {
     /// Stores an [`AlertConfig`] keyed by its numeric ID.
     Alert(u64),
+    /// Stores just the `active` bool separately so it can be read without
+    /// deserializing the full [`AlertConfig`].
+    AlertActive(u64),
     /// Stores the list of alert IDs owned by a given address.
     OwnerIndex(Address),
     /// Stores the list of alert IDs watching a given contract address.
@@ -209,6 +212,8 @@ impl AlertRegistry {
     ) -> u64 {
         owner.require_auth();
 
+        Self::assert_per_owner_limit(&env, &owner);
+
         if label.len() > 128 {
             panic!("label exceeds 128 bytes");
         }
@@ -217,6 +222,8 @@ impl AlertRegistry {
         Self::assert_per_owner_limit(&env, &owner);
 
         Self::assert_per_owner_limit(&env, &owner);
+        Self::validate_rules(&env, &rules);
+
         Self::validate_rules(&env, &rules);
 
         let id = Self::next_id(&env);
@@ -237,6 +244,10 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::Alert(id), 100, 100);
+        env.storage().persistent().set(&DataKey::AlertActive(id), &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::AlertActive(id), 100, 100);
         Self::push_owner_index(&env, &owner, id);
         Self::push_contract_index(&env, &target_contract, id);
 
@@ -612,6 +623,9 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .remove(&DataKey::Alert(config_id));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::AlertActive(config_id));
 
         Self::remove_from_owner_index(env, &config.owner, config_id);
         Self::remove_from_contract_index(env, &config.target_contract, config_id);
@@ -2067,5 +2081,187 @@ mod tests {
                 .unwrap(),
             ContractError::AlertNotFound
         );
+    }
+
+    // 18. get_alert_active returns None for nonexistent ID
+    #[test]
+    fn test_get_alert_active_nonexistent() {
+        let (_env, client) = setup();
+        assert!(client.get_alert_active(&999u64).is_none());
+    }
+
+    // 19. get_alert_active returns true after registration
+    #[test]
+    fn test_get_alert_active_after_register() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.get_alert_active(&id), Some(true));
+    }
+
+    // 20. get_alert_active reflects update_alert changes
+    #[test]
+    fn test_get_alert_active_after_update() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.get_alert_active(&id), Some(true));
+
+        client.update_alert(&owner, &id, &vec![&env], &false);
+        assert_eq!(client.get_alert_active(&id), Some(false));
+
+        client.update_alert(&owner, &id, &vec![&env], &true);
+        assert_eq!(client.get_alert_active(&id), Some(true));
+    }
+
+    // 21. get_alert_active returns None after removal
+    #[test]
+    fn test_get_alert_active_after_remove() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.get_alert_active(&id), Some(true));
+        client.remove_alert(&owner, &id);
+        assert!(client.get_alert_active(&id).is_none());
+    }
+
+    // 22. deactivate_all_alerts returns 0 when owner has no alerts
+    #[test]
+    fn test_deactivate_all_alerts_empty() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+
+        assert_eq!(client.deactivate_all_alerts(&owner), 0);
+    }
+
+    // 23. deactivate_all_alerts deactivates all alerts for the owner
+    #[test]
+    fn test_deactivate_all_alerts_multiple() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 1"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 2"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+        let id3 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 3"),
+            &str(&env, "hash3"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+
+        assert_eq!(client.get_alert_active(&id1), Some(true));
+        assert_eq!(client.get_alert_active(&id2), Some(true));
+        assert_eq!(client.get_alert_active(&id3), Some(true));
+
+        let count = client.deactivate_all_alerts(&owner);
+        assert_eq!(count, 3);
+
+        assert_eq!(client.get_alert_active(&id1), Some(false));
+        assert_eq!(client.get_alert_active(&id2), Some(false));
+        assert_eq!(client.get_alert_active(&id3), Some(false));
+    }
+
+    // 24. deactivate_all_alerts only affects the calling owner's alerts
+    #[test]
+    fn test_deactivate_all_alerts_other_owner_unaffected() {
+        let (env, client) = setup();
+        let owner1 = Address::generate(&env);
+        let owner2 = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner1,
+            &target,
+            &str(&env, "Owner1 Alert"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner2,
+            &target,
+            &str(&env, "Owner2 Alert"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        let count = client.deactivate_all_alerts(&owner1);
+        assert_eq!(count, 1);
+
+        assert_eq!(client.get_alert_active(&id1), Some(false));
+        assert_eq!(client.get_alert_active(&id2), Some(true));
+    }
+
+    // 25. deactivate_all_alerts skips removed alerts and deactivates remaining
+    #[test]
+    fn test_deactivate_all_alerts_after_removal() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id1 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 1"),
+            &str(&env, "hash1"),
+            &vec![&env, str(&env, "rule:transfer")],
+        );
+        let id2 = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert 2"),
+            &str(&env, "hash2"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        client.remove_alert(&owner, &id1);
+
+        let count = client.deactivate_all_alerts(&owner);
+        assert_eq!(count, 1);
+
+        // id1 is gone
+        assert!(client.get_alert(&id1).is_none());
+        // id2 is now inactive
+        assert_eq!(client.get_alert_active(&id2), Some(false));
     }
 }

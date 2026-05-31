@@ -251,6 +251,20 @@ Retrieves a single alert config by ID.
 
 ---
 
+### `get_alert_active`
+
+Cheap read-only function that returns just the `active` bool for a given alert ID, avoiding the cost of deserializing the full [`AlertConfig`](#alertconfig). The active flag is stored under a dedicated storage key (`DataKey::AlertActive`).
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `config_id` | `u64` | Alert config ID |
+
+**Returns:** `Option<bool>` — `Some(true)` if active, `Some(false)` if inactive, `None` if the alert does not exist.
+
+---
+
 ### `get_alerts_for_contract`
 
 Returns all alert configs registered for a given target contract, including both active and inactive entries. Use [`get_active_alerts_for_contract`](#get_active_alerts_for_contract) to filter to active-only.
