@@ -1,6 +1,7 @@
 use soroban_sdk::{symbol_short, vec, Address, Env, Vec};
 
 use crate::types::{AlertConfig, DataKey};
+use crate::{DEFAULT_TTL};
 
 // ── ID counter ────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ pub fn set_alert(env: &Env, id: u64, config: &AlertConfig) {
     env.storage().persistent().set(&DataKey::Alert(id), config);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::Alert(id), 100, 100);
+        .extend_ttl(&DataKey::Alert(id), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 pub fn remove_alert(env: &Env, id: u64) {
@@ -66,7 +67,7 @@ pub fn push_owner_index(env: &Env, owner: &Address, id: u64) {
         .set(&DataKey::OwnerIndex(owner.clone()), &ids);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 /// Remove `id` from the owner's index and persist the updated list.
@@ -84,7 +85,7 @@ pub fn remove_from_owner_index(env: &Env, owner: &Address, id: u64) {
         .set(&DataKey::OwnerIndex(owner.clone()), &updated);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 // ── Contract index ────────────────────────────────────────────────────────────
@@ -113,7 +114,7 @@ pub fn push_contract_index(env: &Env, target: &Address, id: u64) {
         .set(&DataKey::ContractIndex(target.clone()), &ids);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 /// Remove `id` from the contract's index and persist the updated list.
@@ -131,7 +132,7 @@ pub fn remove_from_contract_index(env: &Env, target: &Address, id: u64) {
         .set(&DataKey::ContractIndex(target.clone()), &updated);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 // ── Batch reads ───────────────────────────────────────────────────────────────
