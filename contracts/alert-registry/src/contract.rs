@@ -14,7 +14,7 @@
 use soroban_sdk::{symbol_short, Address, Env, String, Vec};
 
 use crate::storage;
-use crate::types::{AlertConfig, ContractError};
+use crate::types::{AlertConfig, AlertInput, ContractError, MAX_BATCH_SIZE};
 
 pub struct AlertRegistry;
 
