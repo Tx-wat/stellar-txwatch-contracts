@@ -6,11 +6,14 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+testutils = ["soroban-sdk/testutils", "watcher-registry/testutils"]
+watcher-gating = ["watcher-registry"]
+
 [dependencies]
 soroban-sdk = { workspace = true }
+watcher-registry = { path = "../watcher-registry", optional = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-
-[features]
-testutils = ["soroban-sdk/testutils"]
+watcher-registry = { path = "../watcher-registry", features = ["testutils"] }

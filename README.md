@@ -22,7 +22,67 @@ cargo build --release --target wasm32-unknown-unknown
 
 # Test
 cargo test
+
+# Generate TypeScript bindings
+make bindings
 ```
+
+## TypeScript Bindings
+
+TypeScript bindings for the AlertRegistry contract are available on npm:
+
+```bash
+npm install @tx-wat/alert-registry-bindings
+```
+
+See [bindings/alert-registry/README.md](bindings/alert-registry/README.md) for usage examples.
+
+To generate bindings locally:
+
+```bash
+make bindings
+```
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph Stellar["Stellar Network (on-chain)"]
+        AR["AlertRegistry\n─────────────\nstores alert configs\nkeyed by contract address"]
+        WR["WatcherRegistry\n─────────────\nstores authorized\nwatcher addresses"]
+    end
+
+    subgraph OffChain["Off-chain (stellar-txwatch-core)"]
+        W["Watcher Node\n─────────────\npolls Horizon\nmatches rules\nfires webhooks"]
+    end
+
+    Owner["Owner"] -->|"register_alert / update_alert"| AR
+    Admin["Admin"] -->|"register_watcher / remove_watcher"| WR
+
+    W -->|"is_authorized(watcher)"| WR
+    W -->|"get_alerts_for_contract(target)"| AR
+    Horizon["Horizon API"] -->|"GET /accounts/{id}/transactions"| W
+    W -->|"POST webhook URL"| Endpoint["Downstream\nIntegration"]
+```
+
+**Data flow:**
+
+1. An owner registers an alert in `AlertRegistry` — specifying the target contract, rules, and a hashed webhook URL.
+2. Authorized watcher nodes are recorded in `WatcherRegistry` by an admin.
+3. A watcher node polls Horizon for transaction activity, fetches matching alert configs from `AlertRegistry`, and checks whether any rule matches.
+4. On a match the watcher fires the configured webhook so downstream integrations can react.
+
+---
+
+## How it works
+
+The system is centered around three data-flow steps:
+
+1. An owner registers an alert in `AlertRegistry` with the contract address, labels, webhook hash, and rules.
+2. Authorized watcher nodes poll Horizon for transaction activity, then check the stored alert definitions in `AlertRegistry` to determine whether a watched contract event matches.
+3. When a match is found, the watcher fires the configured webhook so downstream integrations can react.
+
+This keeps alert configuration on-chain while letting watcher nodes perform off-chain polling and delivery.
 
 ## Stellar Integration
 
@@ -75,7 +135,15 @@ stellar contract invoke \
 ### Invoking Contracts (JavaScript SDK)
 
 ```js
-import { Contract, SorobanRpc, TransactionBuilder, Networks, BASE_FEE } from "@stellar/stellar-sdk";
+import {
+  Contract,
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  nativeToScVal,
+  Address,
+} from "@stellar/stellar-sdk";
 
 const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
 const contract = new Contract("<ALERT_REGISTRY_CONTRACT_ID>");
@@ -89,7 +157,11 @@ const tx = new TransactionBuilder(account, {
   .addOperation(
     contract.call(
       "register_alert",
-      // args built with xdr helpers — see stellar-sdk docs
+      new Address(ownerKeypair.publicKey()).toScVal(),          // owner
+      new Address("<WATCHED_CONTRACT_ADDRESS>").toScVal(),      // target_contract
+      nativeToScVal("My Alert", { type: "string" }),            // label
+      nativeToScVal("<sha256-of-webhook-url>", { type: "string" }), // webhook_hash
+      nativeToScVal(["rule:transfer", "rule:mint"], { type: "array", element: { type: "string" } }), // rules
     )
   )
   .setTimeout(30)
@@ -98,6 +170,78 @@ const tx = new TransactionBuilder(account, {
 const preparedTx = await server.prepareTransaction(tx);
 preparedTx.sign(ownerKeypair);
 const result = await server.sendTransaction(preparedTx);
+console.log("Transaction hash:", result.hash);
+```
+
+```js
+import {
+  Contract,
+  SorobanRpc,
+  TransactionBuilder,
+  Networks,
+  BASE_FEE,
+  Address,
+} from "@stellar/stellar-sdk";
+
+const server = new SorobanRpc.Server("https://soroban-testnet.stellar.org");
+const contract = new Contract("<WATCHER_REGISTRY_CONTRACT_ID>");
+
+// Initialize the registry (one-time, admin only)
+const account = await server.getAccount(adminKeypair.publicKey());
+const initTx = new TransactionBuilder(account, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "initialize",
+      new Address(adminKeypair.publicKey()).toScVal(), // admin
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const preparedInit = await server.prepareTransaction(initTx);
+preparedInit.sign(adminKeypair);
+await server.sendTransaction(preparedInit);
+
+// Register a watcher node (admin only)
+const account2 = await server.getAccount(adminKeypair.publicKey());
+const registerTx = new TransactionBuilder(account2, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "register_watcher",
+      new Address(adminKeypair.publicKey()).toScVal(),   // admin
+      new Address("<WATCHER_NODE_ADDRESS>").toScVal(),   // watcher
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const preparedRegister = await server.prepareTransaction(registerTx);
+preparedRegister.sign(adminKeypair);
+await server.sendTransaction(preparedRegister);
+
+// Check if an address is an authorized watcher (read-only, no signature needed)
+const account3 = await server.getAccount(adminKeypair.publicKey());
+const checkTx = new TransactionBuilder(account3, {
+  fee: BASE_FEE,
+  networkPassphrase: Networks.TESTNET,
+})
+  .addOperation(
+    contract.call(
+      "is_authorized",
+      new Address("<WATCHER_NODE_ADDRESS>").toScVal(), // watcher
+    )
+  )
+  .setTimeout(30)
+  .build();
+
+const result = await server.simulateTransaction(checkTx);
+console.log("Is authorized:", result.result?.retval); // SCV_BOOL
 ```
 
 ### Invoking Contracts (Rust SDK)
@@ -115,6 +259,8 @@ let config_id = alert_registry.register_alert(
     &rules,
 );
 ```
+
+> **Re-entrancy safety:** Soroban executes contract calls atomically and prevents classic callback-based re-entrancy within the same transaction. The registry contracts only mutate local storage after `require_auth()` succeeds, and they do not invoke external contracts during state updates.
 
 ### Auth Flow
 
@@ -137,6 +283,32 @@ GET https://horizon-testnet.stellar.org/accounts/<CONTRACT_ID>/transactions
 
 Future versions will emit `soroban_sdk::events` for real-time indexing.
 
+## TypeScript Bindings
+
+TypeScript bindings for `WatcherRegistry` are published to npm and generated
+automatically from the compiled WASM on every release using
+`stellar contract bindings typescript`.
+
+```bash
+npm install @tx-wat/watcher-registry @stellar/stellar-sdk
+```
+
+```typescript
+import { Client, networks } from "@tx-wat/watcher-registry";
+
+const client = new Client({
+  contractId: networks.testnet.contractId,
+  networkPassphrase: networks.testnet.networkPassphrase,
+  rpcUrl: networks.testnet.rpcUrl,
+});
+
+const authorized = await client.is_authorized({ watcher: "GABC...XYZ" });
+console.log(authorized.result); // true | false
+```
+
+See [bindings/watcher-registry/README.md](bindings/watcher-registry/README.md)
+for the full API reference and usage examples.
+
 ## Deployed Addresses
 
 See [DEPLOYMENTS.md](DEPLOYMENTS.md).
@@ -145,6 +317,7 @@ See [DEPLOYMENTS.md](DEPLOYMENTS.md).
 
 - [Alert Registry function reference](docs/alert-registry.md)
 - [Watcher Registry function reference](docs/watcher-registry.md)
+- [Ecosystem submission guide](docs/ecosystem-submission.md)
 
 ## Contributing
 
