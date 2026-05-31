@@ -381,7 +381,9 @@ If a `WatcherRegistry` is configured, `querier` must be a registered watcher or 
 
 ### `get_alert_count`
 
-Returns the total number of alerts ever registered (monotonic counter — does not decrease on removal).
+Returns the total number of alerts ever registered.
+
+> **Monotonic counter:** This value only ever increases. Removing an alert (via `remove_alert` or `remove_alert_by_admin`) does not decrement the counter. It reflects the cumulative count of all registrations since contract initialization, not the number of currently active alerts.
 
 **Parameters:** none
 
