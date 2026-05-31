@@ -8,11 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `get_watcher_count` function to WatcherRegistry for efficient watcher count queries (#21)
+- TypeScript bindings for AlertRegistry published to npm as `@tx-wat/alert-registry-bindings` (#120)
+- GitHub Actions workflow for automated npm publishing of TypeScript bindings
+- `make bindings` target for local TypeScript binding generation
+- Documentation for `get_watcher_count` in `docs/watcher-registry.md`
+- Comprehensive README and usage examples for TypeScript bindings package
 - `CHANGELOG.md` to track version history (#75)
 - `SECURITY.md` with responsible disclosure policy (#76)
 - `docs/ttl.md` documenting TTL values and their implications (#77)
 - Inline rustdoc comments on all public and key private functions (#78)
 - Expanded `.gitignore` to exclude build artifacts and test snapshots
+- `bindings/watcher-registry` — TypeScript bindings package `@tx-wat/watcher-registry` generated via `stellar contract bindings typescript`
+- `.github/workflows/publish-bindings.yml` — CI workflow that generates and publishes TypeScript bindings to npm on every GitHub release
+- `docs/ecosystem-submission.md` — step-by-step guide for submitting to the Stellar Developer Tools ecosystem listing and the `stellar/soroban-examples` repository
+- `contracts/watcher-registry/README.md` and `contracts/alert-registry/README.md` — per-contract READMEs required for the soroban-examples submission
 
 ## [0.1.0] - 2025-05-28
 
