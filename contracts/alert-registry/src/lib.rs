@@ -1023,6 +1023,29 @@ mod tests {
         client.remove_alert_by_admin(&new_admin, &id);
     }
 
+    #[test]
+    fn test_old_admin_rejected_after_transfer() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+        let new_admin = Address::generate(&env);
+
+        // first transfer succeeds
+        assert_eq!(
+            client.try_transfer_admin(&admin, &new_admin).unwrap(),
+            Ok(())
+        );
+
+        // old admin cannot call transfer_admin again
+        assert_eq!(
+            client
+                .try_transfer_admin(&admin, &new_admin)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
+    }
+
     // 5. Unauthorized remove rejected
     #[test]
     fn test_remove_unauthorized() {
@@ -2310,5 +2333,51 @@ mod tests {
 
         let page = client.get_contract_alerts_paginated(&target, &1u32, &2u32);
         assert_eq!(page.len(), 2);
+    }
+
+    // 18. get_admin panics with NotInitialized when contract is not initialized
+    #[test]
+    #[should_panic]
+    fn test_get_admin_not_initialized() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, AlertRegistry);
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        client.get_admin();
+    }
+
+    // 19. Alert can be deactivated and reactivated via update_alert
+    #[test]
+    fn test_alert_deactivate_reactivate() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env, str(&env, "rule:mint")],
+        );
+
+        // deactivate
+        assert_eq!(
+            client
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &false)
+                .unwrap(),
+            Ok(())
+        );
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(!cfg.active);
+
+        // reactivate
+        assert_eq!(
+            client
+                .try_update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &true)
+                .unwrap(),
+            Ok(())
+        );
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(cfg.active);
     }
 }
