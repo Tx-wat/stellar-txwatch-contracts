@@ -71,6 +71,24 @@ Emitted when an alert is removed by its owner or by an admin.
 
 ---
 
+### `alert.bump`
+
+Emitted when an alert's TTL is extended via `bump_alert`.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("alert")` |
+| Topic 1 | `Symbol("bump")` |
+| Data | `(id: u64, ttl: u32)` |
+
+> `ttl` is the **effective** TTL after clamping to `MAX_TTL` (535 680 ledgers
+> ≈ 31 days).  Off-chain indexers can use this event to track renewal activity
+> and predict when alerts will next expire.
+
+**Status:** ✅ implemented (`bump_alert`)
+
+---
+
 ### `admin.init`
 
 Emitted when the admin role is first initialised.
@@ -139,7 +157,13 @@ Emitted when a watcher address is de-authorised.
 | Topic 1 | `Symbol("remove")` |
 | Data | `(watcher: Address)` |
 
-**Status:** 🔲 planned (`remove_watcher`)
+**Status:** ✅ implemented (`remove_watcher`, `clear_all_watchers`)
+
+> Dependent systems (e.g. `AlertRegistry` watcher-gating, off-chain trust
+> stores) **must** subscribe to this event to revoke trust immediately when a
+> watcher is deauthorized.  The event is only emitted when the watcher was
+> actually present in the registry — removing an unregistered address is a
+> silent no-op.
 
 ---
 
