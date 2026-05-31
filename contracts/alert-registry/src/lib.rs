@@ -1,13 +1,18 @@
 #![no_std]
 #![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, panic_with_error,
-    symbol_short, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
 };
 
-mod contract;
-mod storage;
-mod types;
+// ── Errors ────────────────────────────────────────────────────────────────────
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ContractError {
+    InvalidWebhookHash = 1,
+}
+
+// ── Storage keys ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 #[path = "tests.rs"]
@@ -233,7 +238,10 @@ impl AlertRegistry {
         label: String,
         webhook_hash: String,
         rules: Vec<String>,
-    ) -> u64 {
+    ) -> Result<u64, ContractError> {
+        if webhook_hash.len() != 64 {
+            return Err(ContractError::InvalidWebhookHash);
+        }
         owner.require_auth();
 
         if label.len() > 128 {
@@ -1055,7 +1063,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "My Alert"),
-            &str(&env, "hash123"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1103,7 +1111,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1123,7 +1131,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1273,7 +1281,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1357,20 +1365,8 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.register_alert(
-            &owner,
-            &target,
-            &str(&env, "A1"),
-            &str(&env, "h1"),
-            &vec![&env],
-        );
-        client.register_alert(
-            &owner,
-            &target,
-            &str(&env, "A2"),
-            &str(&env, "h2"),
-            &vec![&env],
-        );
+        client.register_alert(&owner, &target, &str(&env, "A1"), &hash64(&env), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "A2"), &hash64(&env), &vec![&env]);
 
         assert_eq!(
             client.get_alerts_for_contract(&querier, &target).unwrap().len(),
