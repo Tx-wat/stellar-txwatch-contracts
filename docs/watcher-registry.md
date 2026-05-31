@@ -62,27 +62,11 @@ Removes an address from the authorized watcher set.
 
 ---
 
-### `clear_all_watchers`
-
-Removes all authorized watcher addresses at once. Intended for emergency deauthorization scenarios.
-
-**Requires auth:** `admin`
-
-**Parameters**
-
-| Name | Type | Description |
-|---|---|---|
-| `admin` | `Address` | Current admin |
-
-**Returns:** nothing
-
-**Panics:** `"unauthorized"` if `admin` does not match the stored admin.
-
----
-
-### `is_authorized`
+### `is_watcher_authorized`
 
 Checks whether an address is a currently authorized watcher.
+
+Renamed from `is_authorized` for clarity in cross-contract call contexts — the name makes explicit *what* the address is being authorized as.
 
 **Parameters**
 
@@ -101,6 +85,18 @@ Returns all currently authorized watcher addresses.
 **Parameters:** none
 
 **Returns:** `Vec<Address>` — may be empty.
+
+---
+
+### `get_watcher_count`
+
+Returns the number of registered watchers as a cheap integer read.
+
+This function provides an efficient way to get the count of authorized watchers without requiring callers to fetch and count the full list.
+
+**Parameters:** none
+
+**Returns:** `u32` — the number of authorized watchers.
 
 ---
 
