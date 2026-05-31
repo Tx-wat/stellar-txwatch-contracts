@@ -22,6 +22,25 @@ cargo build --release --target wasm32-unknown-unknown
 
 # Test
 cargo test
+
+# Generate TypeScript bindings
+make bindings
+```
+
+## TypeScript Bindings
+
+TypeScript bindings for the AlertRegistry contract are available on npm:
+
+```bash
+npm install @tx-wat/alert-registry-bindings
+```
+
+See [bindings/alert-registry/README.md](bindings/alert-registry/README.md) for usage examples.
+
+To generate bindings locally:
+
+```bash
+make bindings
 ```
 
 ## Architecture

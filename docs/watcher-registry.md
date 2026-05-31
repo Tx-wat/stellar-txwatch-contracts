@@ -88,6 +88,18 @@ Returns all currently authorized watcher addresses.
 
 ---
 
+### `get_watcher_count`
+
+Returns the number of registered watchers as a cheap integer read.
+
+This function provides an efficient way to get the count of authorized watchers without requiring callers to fetch and count the full list.
+
+**Parameters:** none
+
+**Returns:** `u32` — the number of authorized watchers.
+
+---
+
 ### `transfer_admin`
 
 Transfers the admin role to a new address.
