@@ -313,6 +313,53 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Transfer ownership of alert `config_id` from `caller` to `new_owner`.
+    ///
+    /// Updates both the `Alert` config entry and the `OwnerIndex` entries for
+    /// the previous and new owners atomically. The `ContractIndex` is unchanged
+    /// because the watched contract address does not change.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller` (the current owner).
+    ///
+    /// # Errors
+    /// - `AlertNotFound` — if `config_id` does not exist in storage.
+    /// - `Unauthorized` — if `caller` is not the current owner.
+    ///
+    /// # Panics
+    /// Panics if `new_owner == caller` (no-op transfer is rejected).
+    pub fn transfer_alert_ownership(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+        new_owner: Address,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        assert!(
+            new_owner != caller,
+            "new_owner must differ from the current owner"
+        );
+
+        let mut config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+
+        assert_owner(&config, &caller)?;
+
+        let previous_owner = config.owner.clone();
+        storage::remove_from_owner_index(&env, &previous_owner, config_id);
+        config.owner = new_owner.clone();
+        storage::push_owner_index(&env, &new_owner, config_id);
+        storage::set_alert(&env, config_id, &config);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("transfer")),
+            (config_id, previous_owner, new_owner),
+        );
+
+        Ok(())
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -372,4 +419,125 @@ fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: 
         (symbol_short!("alert"), symbol_short!("remove")),
         (config_id, caller.clone()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    fn setup() -> (Env, AlertRegistryClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AlertRegistry, ());
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        (env, client)
+    }
+
+    fn str(env: &Env, s: &str) -> String {
+        String::from_str(env, s)
+    }
+
+    fn register(client: &AlertRegistryClient, env: &Env, owner: &Address, target: &Address) -> u64 {
+        client.register_alert(
+            owner,
+            target,
+            &str(env, "alert"),
+            &str(env, "hash"),
+            &vec![env],
+        )
+    }
+
+    #[test]
+    fn test_transfer_updates_owner_field() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        client.transfer_alert_ownership(&owner, &id, &new_owner).unwrap();
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.owner, new_owner);
+    }
+
+    #[test]
+    fn test_transfer_updates_owner_index() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        client.transfer_alert_ownership(&owner, &id, &new_owner).unwrap();
+
+        // old owner no longer has the alert
+        assert_eq!(client.get_alerts_by_owner(&owner).len(), 0);
+        // new owner has the alert
+        assert_eq!(client.get_alerts_by_owner(&new_owner).len(), 1);
+    }
+
+    #[test]
+    fn test_transfer_does_not_change_contract_index() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let _id = register(&client, &env, &owner, &target);
+        client.transfer_alert_ownership(&owner, &_id, &new_owner).unwrap();
+
+        // ContractIndex is unaffected
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 1);
+    }
+
+    #[test]
+    fn test_transfer_not_found_returns_error() {
+        let (env, client) = setup();
+        let caller = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+
+        let result = client.try_transfer_alert_ownership(&caller, &999u64, &new_owner);
+        assert_eq!(result.unwrap_err().unwrap(), ContractError::AlertNotFound);
+    }
+
+    #[test]
+    fn test_transfer_unauthorized_returns_error() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        let result = client.try_transfer_alert_ownership(&attacker, &id, &new_owner);
+        assert_eq!(result.unwrap_err().unwrap(), ContractError::Unauthorized);
+    }
+
+    #[test]
+    #[should_panic(expected = "must differ")]
+    fn test_transfer_to_same_owner_panics() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        client.transfer_alert_ownership(&owner, &id, &owner).unwrap();
+    }
+
+    #[test]
+    fn test_new_owner_can_update_after_transfer() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let new_owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = register(&client, &env, &owner, &target);
+        client.transfer_alert_ownership(&owner, &id, &new_owner).unwrap();
+
+        // new_owner can now update the alert
+        let result = client.try_update_alert(&new_owner, &id, &vec![&env], &false);
+        assert_eq!(result.unwrap(), Ok(()));
+    }
 }
