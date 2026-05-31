@@ -835,3 +835,44 @@ fn test_pending_webhook_hash_none_on_registration() {
     let cfg = client.get_alert(&id).unwrap();
     assert!(cfg.pending_webhook_hash.is_none());
 }
+
+// #64 — 10 alerts from the same owner watching the same contract
+//
+// Registers 10 alerts from a single owner all targeting the same contract.
+// Verifies that both the OwnerIndex and the ContractIndex contain exactly
+// 10 entries after all registrations.
+#[test]
+fn test_ten_alerts_same_owner_same_contract() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+    // webhook_hash must be exactly 64 characters
+    let webhook_hash = str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    // 10 distinct labels
+    let labels = [
+        "Alert 0", "Alert 1", "Alert 2", "Alert 3", "Alert 4",
+        "Alert 5", "Alert 6", "Alert 7", "Alert 8", "Alert 9",
+    ];
+
+    for label in labels {
+        client.register_alert(
+            &owner,
+            &target,
+            &str(&env, label),
+            &webhook_hash,
+            &vec![&env],
+        );
+    }
+
+    // Both indexes must contain exactly 10 entries
+    assert_eq!(
+        client.get_alerts_by_owner(&owner, &owner).unwrap().len(),
+        10,
+        "owner index must contain exactly 10 entries"
+    );
+    assert_eq!(
+        client.get_alerts_for_contract(&owner, &target).unwrap().len(),
+        10,
+        "contract index must contain exactly 10 entries"
+    );
+}
