@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Feature A — `watcher.remove` event**: `WatcherRegistry::remove_watcher` now emits
+  `(Symbol("watcher"), Symbol("remove"))` with `data = watcher: Address` **only when the
+  watcher was actually present** (no-op removals are silent). Dependent systems such as
+  `AlertRegistry` watcher-gating must subscribe to this event to revoke trust immediately.
+  `clear_all_watchers` emits one event per removed watcher for the same reason.
+- **Feature B — configurable TTL via `bump_alert`**: `AlertRegistry` now exposes
+  `bump_alert(config_id, ttl)` which extends the TTL of an alert and its associated
+  indexes up to `MAX_TTL` (535 680 ledgers ≈ 31 days). Values above the cap are silently
+  clamped. No auth is required — any address (e.g. an off-chain keeper) may call it.
+  Emits `(Symbol("alert"), Symbol("bump"))` with `data = (id: u64, effective_ttl: u32)`.
+- `DEFAULT_TTL` constant (17 280 ledgers ≈ 24 hours) replaces the previous hardcoded
+  100-ledger value across all `extend_ttl` calls in `alert-registry`.
+- `MAX_TTL` constant (535 680 ledgers ≈ 31 days) as the protocol-enforced ceiling for
+  caller-specified TTL values.
+- `WatcherRegistry::is_authorized` alias for `is_watcher_authorized` (backwards compat).
+- `WatcherRegistry::clear_all_watchers` bulk-deauthorizes all watchers in one admin call,
+  emitting a `watcher.remove` event for each removed address.
+- `WatcherRegistry::decrement_watcher_count` is now correctly called on `remove_watcher`
+  (previously the count only ever incremented — this was a bug fix).
+- `alert.bump` event documented in `docs/events.md`.
+- `watcher.remove` event marked ✅ implemented in `docs/events.md`.
+- `docs/ttl.md` updated to document `DEFAULT_TTL`, `MAX_TTL`, and `bump_alert`.
+
+### Fixed
+- `WatcherRegistry::remove_watcher` no longer emits an event when the watcher address
+  was not registered (previously always emitted regardless).
+- `WatcherRegistry::get_watcher_count` now decrements correctly on removal.
+- `AlertRegistry::remove_alert` body was missing in `lib.rs` (structural corruption);
+  restored with correct `remove_alert_record` call.
+- `AlertRegistry::remove_alert_by_admin` was missing from `lib.rs`; restored.
+- `AlertRegistry::register_alert` had duplicated validation calls; deduplicated.
+- `AlertRegistry::update_alert` now keeps `DataKey::AlertActive` in sync when `active`
+  changes.
+- `contract.rs` `#[contract]` / `#[contractimpl]` attributes removed to prevent
+  duplicate Soroban client generation conflicting with `lib.rs`.
+- All `extend_ttl(_, 100, 100)` calls replaced with `extend_ttl(_, DEFAULT_TTL, DEFAULT_TTL)`.
+
 - `get_watcher_count` function to WatcherRegistry for efficient watcher count queries (#21)
 - TypeScript bindings for AlertRegistry published to npm as `@tx-wat/alert-registry-bindings` (#120)
 - GitHub Actions workflow for automated npm publishing of TypeScript bindings
