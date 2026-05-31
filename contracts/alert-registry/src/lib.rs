@@ -226,6 +226,9 @@ impl AlertRegistry {
 
         Self::validate_rules(&env, &rules);
 
+        Self::validate_rules(&env, &rules);
+        Self::assert_per_owner_limit(&env, &owner);
+
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
 
@@ -794,7 +797,7 @@ impl AlertRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Ledger as _}, vec, Env, String};
 
     fn setup() -> (Env, AlertRegistryClient<'static>) {
         let env = Env::default();
@@ -2379,5 +2382,63 @@ mod tests {
         );
         let cfg = client.get_alert(&id).unwrap();
         assert!(cfg.active);
+    }
+
+    // 18. update_webhook advances updated_at beyond its value at registration
+    #[test]
+    fn test_update_webhook_updates_timestamp() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "A"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        let original_updated_at = client.get_alert(&id).unwrap().updated_at;
+        env.ledger().set_timestamp(original_updated_at + 100);
+
+        client.try_update_webhook(&owner, &id, &str(&env, "new-hash")).unwrap().unwrap();
+
+        let cfg = client.get_alert(&id).unwrap();
+        assert!(cfg.updated_at > original_updated_at);
+    }
+
+    // 19. Multiple owners watching the same contract — indexes are isolated per owner
+    #[test]
+    fn test_multiple_owners_overlapping_target_contract() {
+        let (env, client) = setup();
+        let owner_a = Address::generate(&env);
+        let owner_b = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.register_alert(
+            &owner_a,
+            &target,
+            &str(&env, "Alert-A"),
+            &str(&env, "hash-a"),
+            &vec![&env],
+        );
+        client.register_alert(
+            &owner_b,
+            &target,
+            &str(&env, "Alert-B"),
+            &str(&env, "hash-b"),
+            &vec![&env],
+        );
+
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
+
+        let alerts_a = client.get_alerts_by_owner(&owner_a);
+        assert_eq!(alerts_a.len(), 1);
+        assert_eq!(alerts_a.get(0).unwrap().owner, owner_a);
+
+        let alerts_b = client.get_alerts_by_owner(&owner_b);
+        assert_eq!(alerts_b.len(), 1);
+        assert_eq!(alerts_b.get(0).unwrap().owner, owner_b);
     }
 }
