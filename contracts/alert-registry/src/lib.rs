@@ -4,7 +4,9 @@ use soroban_sdk::{
     contract, contractclient, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
 };
 
-// ── Storage keys ────────────────────────────────────────────────────────────
+mod contract;
+mod storage;
+mod types;
 
 /// Storage key variants used to address persistent and instance entries.
 #[contracttype]

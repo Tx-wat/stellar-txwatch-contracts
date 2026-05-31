@@ -306,10 +306,10 @@ mod tests {
     fn setup() -> (Env, Address, WatcherRegistryClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, WatcherRegistry);
+        let contract_id = env.register(WatcherRegistry, ());
         let client = WatcherRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-        client.try_initialize(&admin).unwrap();
+        client.initialize(&admin);
         (env, admin, client)
     }
 
@@ -331,10 +331,9 @@ mod tests {
     #[should_panic]
     fn test_initialize_requires_admin_auth() {
         let env = Env::default();
-        let contract_id = env.register_contract(None, WatcherRegistry);
+        let contract_id = env.register(WatcherRegistry, ());
         let client = WatcherRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
-
         client.initialize(&admin);
     }
 
@@ -344,7 +343,7 @@ mod tests {
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        client.try_register_watcher(&admin, &watcher).unwrap();
+        client.register_watcher(&admin, &watcher);
         assert_eq!(client.try_remove_watcher(&admin, &watcher).unwrap(), Ok(()));
         assert!(!client.is_watcher_authorized(&watcher));
     }
@@ -410,7 +409,7 @@ mod tests {
         let attacker = Address::generate(&env);
         let watcher = Address::generate(&env);
 
-        client.try_register_watcher(&admin, &watcher).unwrap();
+        client.register_watcher(&admin, &watcher);
         assert_eq!(
             client
                 .try_remove_watcher(&attacker, &watcher)
@@ -465,7 +464,6 @@ mod tests {
                 Ok(())
             );
         }
-
         assert_eq!(client.get_watchers().len(), 1);
     }
 
@@ -477,9 +475,9 @@ mod tests {
         let w2 = Address::generate(&env);
         let w3 = Address::generate(&env);
 
-        client.try_register_watcher(&admin, &w1).unwrap();
-        client.try_register_watcher(&admin, &w2).unwrap();
-        client.try_register_watcher(&admin, &w3).unwrap();
+        client.register_watcher(&admin, &w1);
+        client.register_watcher(&admin, &w2);
+        client.register_watcher(&admin, &w3);
 
         assert_eq!(client.get_watchers().len(), 3);
         assert!(client.is_watcher_authorized(&w1));
@@ -498,7 +496,7 @@ mod tests {
     fn test_get_admin_uninitialized() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, WatcherRegistry);
+        let contract_id = env.register(WatcherRegistry, ());
         let client = WatcherRegistryClient::new(&env, &contract_id);
 
         assert_eq!(
@@ -513,7 +511,7 @@ mod tests {
     fn test_get_admin_not_initialized() {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, WatcherRegistry);
+        let contract_id = env.register(WatcherRegistry, ());
         let client = WatcherRegistryClient::new(&env, &contract_id);
         client.get_admin();
     }
