@@ -354,6 +354,20 @@ fn test_update_alert_missing_returns_not_found() {
     );
 }
 
+#[test]
+fn test_remove_alert_nonexistent_returns_not_found() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_remove_alert(&owner, &999u64)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::AlertNotFound
+    );
+}
+
 // 12. active defaults to true on registration
 #[test]
 fn test_active_defaults_to_true() {
