@@ -1,12 +1,23 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Vec};
+//! Secondary (non-active) AlertRegistry implementation.
+//!
+//! This module contains a clean, modular implementation of the AlertRegistry
+//! contract logic backed by the `storage` and `types` modules.  It is **not**
+//! the compiled contract entry-point — that role belongs to `lib.rs`.
+//!
+//! The struct and impl are kept as plain Rust (no `#[contract]` /
+//! `#[contractimpl]` attributes) so they compile without generating a
+//! duplicate Soroban client and without conflicting with the `lib.rs`
+//! implementation.  The `tests.rs` file registers the `lib.rs` version.
+
+#![allow(dead_code)]
+
+use soroban_sdk::{symbol_short, Address, Env, String, Vec};
 
 use crate::storage;
 use crate::types::{AlertConfig, ContractError};
 
-#[contract]
 pub struct AlertRegistry;
 
-#[contractimpl]
 impl AlertRegistry {
     /// Register a new alert config and return its assigned ID.
     ///
@@ -60,15 +71,6 @@ impl AlertRegistry {
     }
 
     /// Update the rules and active flag of an existing alert.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `owner`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("alert"), Symbol("update"))` with data
-    /// `(id: u64, owner: Address, active: bool)`.
-    /// See `docs/events.md` for the full spec.
     pub fn update_alert(
         env: Env,
         owner: Address,
@@ -89,24 +91,10 @@ impl AlertRegistry {
         config.updated_at = env.ledger().timestamp();
 
         storage::set_alert(&env, config_id, &config);
-
-        // TODO(events): emit (Symbol("alert"), Symbol("update")),
-        //               data = (config_id, owner, active)
-        //               See docs/events.md — alert.update
-
         Ok(())
     }
 
     /// Update the webhook hash for an existing alert.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `caller`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("alert"), Symbol("webhook"))` with data
-    /// `(id: u64, caller: Address)`.
-    /// See `docs/events.md` for the full spec.
     pub fn update_webhook(
         env: Env,
         caller: Address,
@@ -124,25 +112,10 @@ impl AlertRegistry {
         config.updated_at = env.ledger().timestamp();
 
         storage::set_alert(&env, config_id, &config);
-
-        // TODO(events): emit (Symbol("alert"), Symbol("webhook")),
-        //               data = (config_id, caller)
-        //               See docs/events.md — alert.webhook
-
         Ok(())
     }
 
     /// Remove an alert config from storage.
-    ///
-    /// Also removes the alert ID from the owner and contract indexes.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `caller`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Emits `(Symbol("alert"), Symbol("remove"))` with data
-    /// `(id: u64, caller: Address)`.
     pub fn remove_alert(
         env: Env,
         caller: Address,
@@ -154,46 +127,25 @@ impl AlertRegistry {
             .ok_or(ContractError::AlertNotFound)?;
 
         assert_owner(&config, &caller)?;
-
         remove_alert_record(&env, &config, config_id, &caller);
         Ok(())
     }
 
     /// Retrieve a single alert config by its ID.
-    ///
-    /// Returns `None` if the alert does not exist or has expired.
     pub fn get_alert(env: Env, config_id: u64) -> Option<AlertConfig> {
         storage::get_alert(&env, config_id)
     }
 
-    /// Initialize the optional admin role for the registry. Can only be called once.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("init"))` with data
-    /// `(admin: Address)`.
-    /// See `docs/events.md` for the full spec.
+    /// Initialize the optional admin role for the registry.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
         if storage::has_admin(&env) {
             return Err(ContractError::AlreadyInitialized);
         }
         storage::set_admin(&env, &admin);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("init")),
-        //               data = (admin)
-        //               See docs/events.md — admin.init
-
         Ok(())
     }
 
     /// Transfer the admin role to a new address (admin only).
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `admin`.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("transfer"))` with data
-    /// `(old_admin: Address, new_admin: Address)`.
-    /// See `docs/events.md` for the full spec.
     pub fn transfer_admin(
         env: Env,
         admin: Address,
@@ -202,11 +154,6 @@ impl AlertRegistry {
         admin.require_auth();
         assert_admin(&env, &admin)?;
         storage::set_admin(&env, &new_admin);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("transfer")),
-        //               data = (admin, new_admin)
-        //               See docs/events.md — admin.transfer
-
         Ok(())
     }
 
@@ -215,12 +162,7 @@ impl AlertRegistry {
         storage::get_admin(&env).ok_or(ContractError::NotInitialized)
     }
 
-    /// Set a per-owner active alert limit (admin only). A value of `0` means no limit.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("limit"))` with data
-    /// `(admin: Address, limit: u32)`.
-    /// See `docs/events.md` for the full spec.
+    /// Set a per-owner active alert limit (admin only).
     pub fn set_per_owner_alert_limit(
         env: Env,
         admin: Address,
@@ -229,11 +171,6 @@ impl AlertRegistry {
         admin.require_auth();
         assert_admin(&env, &admin)?;
         storage::set_limit(&env, limit);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("limit")),
-        //               data = (admin, limit)
-        //               See docs/events.md — admin.limit
-
         Ok(())
     }
 
