@@ -2272,4 +2272,43 @@ mod tests {
         // id2 is now inactive
         assert_eq!(client.get_alert_active(&id2), Some(false));
     }
+
+    // 18. get_alerts_by_owner_paginated — basic pagination
+    #[test]
+    fn test_get_alerts_by_owner_paginated() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for label in ["A", "B", "C", "D", "E"] {
+            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+        }
+
+        // first page
+        let page1 = client.get_alerts_by_owner_paginated(&owner, &0u32, &3u32);
+        assert_eq!(page1.len(), 3);
+
+        // second page
+        let page2 = client.get_alerts_by_owner_paginated(&owner, &3u32, &3u32);
+        assert_eq!(page2.len(), 2);
+
+        // offset beyond length returns empty
+        let empty = client.get_alerts_by_owner_paginated(&owner, &10u32, &3u32);
+        assert_eq!(empty.len(), 0);
+    }
+
+    // 19. get_contract_alerts_paginated — basic pagination
+    #[test]
+    fn test_get_contract_alerts_paginated() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        for label in ["A", "B", "C", "D"] {
+            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+        }
+
+        let page = client.get_contract_alerts_paginated(&target, &1u32, &2u32);
+        assert_eq!(page.len(), 2);
+    }
 }
