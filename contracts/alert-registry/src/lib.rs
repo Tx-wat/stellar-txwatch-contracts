@@ -211,9 +211,8 @@ impl AlertRegistry {
             panic!("label exceeds 128 bytes");
         }
 
-        if rules.len() > 50 {
-            panic!("too many rules: maximum is 50");
-        }
+        Self::validate_rules(&env, &rules);
+        Self::assert_per_owner_limit(&env, &owner);
 
         Self::assert_per_owner_limit(&env, &owner);
         Self::validate_rules(&env, &rules);
@@ -784,7 +783,7 @@ mod tests {
     fn setup() -> (Env, AlertRegistryClient<'static>) {
         let env = Env::default();
         env.mock_all_auths();
-        let contract_id = env.register_contract(None, AlertRegistry);
+        let contract_id = env.register(AlertRegistry, ());
         let client = AlertRegistryClient::new(&env, &contract_id);
         (env, client)
     }
@@ -944,7 +943,7 @@ mod tests {
     fn test_admin_remove_any_alert() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -956,7 +955,7 @@ mod tests {
             &vec![&env, str(&env, "rule:mint")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&admin, &id), Ok(()));
+        client.remove_alert_by_admin(&admin, &id);
         assert!(client.get_alert(&id).is_none());
     }
 
@@ -965,8 +964,8 @@ mod tests {
     fn test_admin_set_per_owner_alert_limit() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
-        client.set_per_owner_alert_limit(&admin, &1u32).unwrap();
+        client.initialize(&admin);
+        client.set_per_owner_alert_limit(&admin, &1u32);
 
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
@@ -991,10 +990,10 @@ mod tests {
     fn test_admin_transfer_admin() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
 
-        assert_eq!(client.transfer_admin(&admin, &new_admin), Ok(()));
+        client.transfer_admin(&admin, &new_admin);
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
         let id = client.register_alert(
@@ -1005,7 +1004,7 @@ mod tests {
             &vec![&env, str(&env, "rule:transfer")],
         );
 
-        assert_eq!(client.remove_alert_by_admin(&new_admin, &id), Ok(()));
+        client.remove_alert_by_admin(&new_admin, &id);
     }
 
     // 5. Unauthorized remove rejected
@@ -1937,5 +1936,82 @@ mod tests {
         );
         env.set_auths(&[]);
         client.remove_alert_by_admin(&admin, &id);
+    }
+
+    // #63 — ID monotonicity: each successive register_alert returns prev+1
+    #[test]
+    fn test_id_monotonicity() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        const N: u64 = 10;
+        let mut prev_id: Option<u64> = None;
+        for i in 0..N {
+            let id = client.register_alert(
+                &owner,
+                &target,
+                &str(&env, "alert"),
+                &str(&env, "hash"),
+                &vec![&env],
+            );
+            if let Some(p) = prev_id {
+                assert_eq!(id, p + 1, "expected id {} but got {} at iteration {}", p + 1, id, i);
+            }
+            prev_id = Some(id);
+        }
+    }
+
+    // #33 — update_target_contract moves the alert to a new contract index
+    #[test]
+    fn test_update_target_contract() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let old_target = Address::generate(&env);
+        let new_target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &old_target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        client.update_target_contract(&owner, &id, &new_target);
+
+        // alert config reflects new target
+        let cfg = client.get_alert(&id).unwrap();
+        assert_eq!(cfg.target_contract, new_target);
+
+        // indexes updated correctly
+        assert_eq!(client.get_alerts_for_contract(&old_target).len(), 0);
+        assert_eq!(client.get_alerts_for_contract(&new_target).len(), 1);
+    }
+
+    // #33 — update_target_contract unauthorized
+    #[test]
+    fn test_update_target_contract_unauthorized() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let target = Address::generate(&env);
+        let new_target = Address::generate(&env);
+
+        let id = client.register_alert(
+            &owner,
+            &target,
+            &str(&env, "Alert"),
+            &str(&env, "hash"),
+            &vec![&env],
+        );
+
+        assert_eq!(
+            client
+                .try_update_target_contract(&attacker, &id, &new_target)
+                .unwrap_err()
+                .unwrap(),
+            ContractError::Unauthorized
+        );
     }
 }
