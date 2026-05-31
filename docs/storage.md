@@ -18,6 +18,7 @@ Source: `contracts/alert-registry/src/lib.rs`
 | `symbol_short!("NEXT_ID")` | Instance | `u64` | Monotonic counter used to generate unique alert IDs |
 | `symbol_short!("ADMIN")` | Instance | `Address` | Optional admin address that may remove alerts and set owner limits |
 | `symbol_short!("LIMIT")` | Instance | `u32` | Optional per-owner active alert limit |
+| `symbol_short!("WATCHREG")` | Instance | `Address` | Optional `WatcherRegistry` contract address; when set, read queries are gated to registered watchers |
 
 ### AlertConfig Fields
 
