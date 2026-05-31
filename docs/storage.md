@@ -13,11 +13,13 @@ Source: `contracts/alert-registry/src/lib.rs`
 | Key | Tier | Value Type | Description |
 |---|---|---|---|
 | `DataKey::Alert(id: u64)` | Persistent | `AlertConfig` | A single alert configuration, keyed by its numeric ID |
+| `DataKey::AlertActive(id: u64)` | Persistent | `bool` | The `active` flag stored separately so it can be read without deserializing the full `AlertConfig` (see `get_alert_active`) |
 | `DataKey::OwnerIndex(addr: Address)` | Persistent | `Vec<u64>` | List of alert IDs owned by a given address |
 | `DataKey::ContractIndex(addr: Address)` | Persistent | `Vec<u64>` | List of alert IDs watching a given contract address |
 | `symbol_short!("NEXT_ID")` | Instance | `u64` | Monotonic counter used to generate unique alert IDs |
 | `symbol_short!("ADMIN")` | Instance | `Address` | Optional admin address that may remove alerts and set owner limits |
 | `symbol_short!("LIMIT")` | Instance | `u32` | Optional per-owner active alert limit |
+| `symbol_short!("WATCHREG")` | Instance | `Address` | Optional `WatcherRegistry` contract address; when set, read queries are gated to registered watchers |
 
 ### AlertConfig Fields
 
@@ -34,14 +36,14 @@ Source: `contracts/alert-registry/src/lib.rs`
 
 ### TTL Behavior
 
-All three persistent key variants (`Alert`, `OwnerIndex`, `ContractIndex`) are extended by **100 ledgers** (≈ 8 minutes at 5 s/ledger) on every write that touches them.
+All four persistent key variants (`Alert`, `AlertActive`, `OwnerIndex`, `ContractIndex`) are extended by **100 ledgers** (≈ 8 minutes at 5 s/ledger) on every write that touches them.
 
 | Function | Keys Extended |
 |---|---|
-| `register_alert` | `Alert(id)`, `OwnerIndex(owner)`, `ContractIndex(target)` |
-| `update_alert` | `Alert(id)` |
+| `register_alert` | `Alert(id)`, `AlertActive(id)`, `OwnerIndex(owner)`, `ContractIndex(target)` |
+| `update_alert` | `Alert(id)`, `AlertActive(id)` |
 | `update_webhook` | `Alert(id)` |
-| `remove_alert` | Entry deleted — no TTL extension |
+| `remove_alert` | Entries deleted — no TTL extension |
 
 Read-only functions (`get_alert`, `get_alerts_for_contract`, `get_alerts_by_owner`, paginated variants, `get_alert_count`) do **not** extend any TTL.
 
