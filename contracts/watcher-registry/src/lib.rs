@@ -197,7 +197,20 @@ impl WatcherRegistry {
         Ok(())
     }
 
-    /// Remove a watcher (any admin may call this).
+    /// Remove (deauthorize) a watcher (any admin may call this).
+    ///
+    /// If the watcher address is not currently registered this is a no-op —
+    /// the call succeeds and no event is emitted.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `admin`, who must be an
+    /// existing admin.
+    ///
+    /// # Events
+    /// Emits `(Symbol("watcher"), Symbol("remove"))` with data
+    /// `(watcher: Address)` when the watcher was present and has been removed.
+    /// Dependent systems (e.g. `AlertRegistry` watcher-gating) should listen
+    /// for this event to revoke trust immediately.
     pub fn remove_watcher(
         env: Env,
         admin: Address,
@@ -211,18 +224,25 @@ impl WatcherRegistry {
         let mut removed = false;
         for i in 0..watchers.len() {
             let w = watchers.get(i).unwrap();
-            if w != watcher {
-                updated.push_back(w);
-            } else {
+            if w == watcher {
                 removed = true;
+            } else {
+                updated.push_back(w);
             }
         }
         env.storage().instance().set(&DataKey::Watchers, &updated);
 
-        env.events().publish(
-            (symbol_short!("watcher"), symbol_short!("remove")),
-            watcher,
-        );
+        // Only emit the event and decrement the counter when the watcher was
+        // actually present.  Callers that need to detect deauthorization must
+        // subscribe to this event — it is the authoritative signal that a
+        // watcher's trust has been revoked.
+        if removed {
+            Self::decrement_watcher_count(&env);
+            env.events().publish(
+                (symbol_short!("watcher"), symbol_short!("remove")),
+                watcher,
+            );
+        }
 
         Ok(())
     }
@@ -240,6 +260,45 @@ impl WatcherRegistry {
             }
         }
         false
+    }
+
+    /// Alias for [`is_watcher_authorized`] kept for backwards compatibility.
+    #[must_use]
+    pub fn is_authorized(env: Env, watcher: Address) -> bool {
+        Self::is_watcher_authorized(env, watcher)
+    }
+
+    /// Remove all registered watchers in a single admin call.
+    ///
+    /// This is a bulk deauthorization operation.  Each removed watcher emits
+    /// a `("watcher", "remove")` event so dependent systems can revoke trust
+    /// for every affected address.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `admin`, who must be an
+    /// existing admin.
+    pub fn clear_all_watchers(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        let watchers = Self::load_watchers(&env);
+        for i in 0..watchers.len() {
+            let w = watchers.get(i).unwrap();
+            env.events().publish(
+                (symbol_short!("watcher"), symbol_short!("remove")),
+                w,
+            );
+        }
+
+        let empty: Vec<Address> = vec![&env];
+        env.storage().instance().set(&DataKey::Watchers, &empty);
+
+        // Reset the count to zero
+        env.storage()
+            .instance()
+            .set(&symbol_short!("W_CNT"), &0u32);
+
+        Ok(())
     }
 
     /// Get all authorized watcher addresses.
@@ -792,4 +851,74 @@ mod tests {
 
         assert!(!env.events().all().is_empty());
     }
-}
+
+    // 23. remove_watcher event has the correct topic and data shape
+    #[test]
+    fn test_remove_watcher_event_shape() {
+        use soroban_sdk::{symbol_short, testutils::Events as _};
+
+        let (env, admin, client) = setup();
+        let watcher = Address::generate(&env);
+
+        client.register_watcher(&admin, &watcher).unwrap();
+        client.remove_watcher(&admin, &watcher).unwrap();
+
+        let events = env.events().all();
+        // Find the watcher.remove event (last event emitted)
+        let remove_event = events
+            .iter()
+            .find(|(_, topics, _)| {
+                // topics is a Vec<Val>; check the two symbol topics
+                topics.len() == 2
+            });
+        assert!(remove_event.is_some(), "expected a watcher.remove event");
+
+        // Verify the exact topic and data shape as specified in docs/events.md:
+        //   Topic 0: Symbol("watcher")
+        //   Topic 1: Symbol("remove")
+        //   Data:    watcher: Address
+        let (_, topics, data) = remove_event.unwrap();
+        assert_eq!(topics.get(0).unwrap(), symbol_short!("watcher").into());
+        assert_eq!(topics.get(1).unwrap(), symbol_short!("remove").into());
+        let emitted_watcher: Address = soroban_sdk::FromVal::from_val(&env, &data);
+        assert_eq!(emitted_watcher, watcher);
+    }
+
+    // 24. remove_watcher on a non-registered address is a no-op — no event emitted
+    #[test]
+    fn test_remove_watcher_not_registered_no_event() {
+        use soroban_sdk::testutils::Events as _;
+
+        let (env, admin, client) = setup();
+        let stranger = Address::generate(&env);
+
+        // stranger was never registered — remove should succeed silently
+        client.remove_watcher(&admin, &stranger).unwrap();
+
+        // The only event should be the admin.init from setup(); no watcher.remove
+        let events = env.events().all();
+        let has_remove = events.iter().any(|(_, topics, _)| {
+            topics.len() == 2
+                && topics.get(0).unwrap() == symbol_short!("watcher").into()
+                && topics.get(1).unwrap() == symbol_short!("remove").into()
+        });
+        assert!(!has_remove, "no watcher.remove event expected for unregistered watcher");
+    }
+
+    // 25. get_watcher_count decrements correctly after remove_watcher
+    #[test]
+    fn test_watcher_count_decrements_on_remove() {
+        let (env, admin, client) = setup();
+        let w1 = Address::generate(&env);
+        let w2 = Address::generate(&env);
+
+        client.register_watcher(&admin, &w1).unwrap();
+        client.register_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 2);
+
+        client.remove_watcher(&admin, &w1).unwrap();
+        assert_eq!(client.get_watcher_count(), 1);
+
+        client.remove_watcher(&admin, &w2).unwrap();
+        assert_eq!(client.get_watcher_count(), 0);
+    }

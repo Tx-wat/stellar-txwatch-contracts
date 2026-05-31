@@ -51,8 +51,9 @@ pub struct AlertInput {
 
 /// On-chain configuration for a single alert.
 ///
-/// Stored under [`DataKey::Alert`] with a TTL of 100 ledgers (~8 minutes).
-/// See `docs/ttl.md` for expiry details and how to extend the TTL.
+/// Stored under [`DataKey::Alert`] with a default TTL of `DEFAULT_TTL` ledgers
+/// (~24 hours). Use `AlertRegistry::bump_alert` to extend up to `MAX_TTL`.
+/// See `docs/ttl.md` for expiry details.
 #[contracttype]
 #[derive(Clone)]
 pub struct AlertConfig {

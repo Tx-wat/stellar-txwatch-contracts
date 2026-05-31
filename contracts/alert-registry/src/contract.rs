@@ -1,12 +1,23 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, vec, Address, Env, String, Vec};
+//! Secondary (non-active) AlertRegistry implementation.
+//!
+//! This module contains a clean, modular implementation of the AlertRegistry
+//! contract logic backed by the `storage` and `types` modules.  It is **not**
+//! the compiled contract entry-point — that role belongs to `lib.rs`.
+//!
+//! The struct and impl are kept as plain Rust (no `#[contract]` /
+//! `#[contractimpl]` attributes) so they compile without generating a
+//! duplicate Soroban client and without conflicting with the `lib.rs`
+//! implementation.  The `tests.rs` file registers the `lib.rs` version.
+
+#![allow(dead_code)]
+
+use soroban_sdk::{symbol_short, Address, Env, String, Vec};
 
 use crate::storage;
 use crate::types::{AlertConfig, AlertInput, ContractError, MAX_BATCH_SIZE};
 
-#[contract]
 pub struct AlertRegistry;
 
-#[contractimpl]
 impl AlertRegistry {
     /// Register a new alert config and return its assigned ID.
     ///
@@ -60,15 +71,6 @@ impl AlertRegistry {
     }
 
     /// Update the rules and active flag of an existing alert.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `owner`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("alert"), Symbol("update"))` with data
-    /// `(id: u64, owner: Address, active: bool)`.
-    /// See `docs/events.md` for the full spec.
     pub fn update_alert(
         env: Env,
         owner: Address,
@@ -89,24 +91,10 @@ impl AlertRegistry {
         config.updated_at = env.ledger().timestamp();
 
         storage::set_alert(&env, config_id, &config);
-
-        // TODO(events): emit (Symbol("alert"), Symbol("update")),
-        //               data = (config_id, owner, active)
-        //               See docs/events.md — alert.update
-
         Ok(())
     }
 
     /// Update the webhook hash for an existing alert.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `caller`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("alert"), Symbol("webhook"))` with data
-    /// `(id: u64, caller: Address)`.
-    /// See `docs/events.md` for the full spec.
     pub fn update_webhook(
         env: Env,
         caller: Address,
@@ -124,25 +112,10 @@ impl AlertRegistry {
         config.updated_at = env.ledger().timestamp();
 
         storage::set_alert(&env, config_id, &config);
-
-        // TODO(events): emit (Symbol("alert"), Symbol("webhook")),
-        //               data = (config_id, caller)
-        //               See docs/events.md — alert.webhook
-
         Ok(())
     }
 
     /// Remove an alert config from storage.
-    ///
-    /// Also removes the alert ID from the owner and contract indexes.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `caller`, who must also be
-    /// the original owner of the alert.
-    ///
-    /// # Events
-    /// Emits `(Symbol("alert"), Symbol("remove"))` with data
-    /// `(id: u64, caller: Address)`.
     pub fn remove_alert(
         env: Env,
         caller: Address,
@@ -154,46 +127,25 @@ impl AlertRegistry {
             .ok_or(ContractError::AlertNotFound)?;
 
         assert_owner(&config, &caller)?;
-
         remove_alert_record(&env, &config, config_id, &caller);
         Ok(())
     }
 
     /// Retrieve a single alert config by its ID.
-    ///
-    /// Returns `None` if the alert does not exist or has expired.
     pub fn get_alert(env: Env, config_id: u64) -> Option<AlertConfig> {
         storage::get_alert(&env, config_id)
     }
 
-    /// Initialize the optional admin role for the registry. Can only be called once.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("init"))` with data
-    /// `(admin: Address)`.
-    /// See `docs/events.md` for the full spec.
+    /// Initialize the optional admin role for the registry.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
         if storage::has_admin(&env) {
             return Err(ContractError::AlreadyInitialized);
         }
         storage::set_admin(&env, &admin);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("init")),
-        //               data = (admin)
-        //               See docs/events.md — admin.init
-
         Ok(())
     }
 
     /// Transfer the admin role to a new address (admin only).
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `admin`.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("transfer"))` with data
-    /// `(old_admin: Address, new_admin: Address)`.
-    /// See `docs/events.md` for the full spec.
     pub fn transfer_admin(
         env: Env,
         admin: Address,
@@ -202,11 +154,6 @@ impl AlertRegistry {
         admin.require_auth();
         assert_admin(&env, &admin)?;
         storage::set_admin(&env, &new_admin);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("transfer")),
-        //               data = (admin, new_admin)
-        //               See docs/events.md — admin.transfer
-
         Ok(())
     }
 
@@ -215,12 +162,7 @@ impl AlertRegistry {
         storage::get_admin(&env).ok_or(ContractError::NotInitialized)
     }
 
-    /// Set a per-owner active alert limit (admin only). A value of `0` means no limit.
-    ///
-    /// # Events
-    /// Planned: emits `(Symbol("admin"), Symbol("limit"))` with data
-    /// `(admin: Address, limit: u32)`.
-    /// See `docs/events.md` for the full spec.
+    /// Set a per-owner active alert limit (admin only).
     pub fn set_per_owner_alert_limit(
         env: Env,
         admin: Address,
@@ -229,11 +171,6 @@ impl AlertRegistry {
         admin.require_auth();
         assert_admin(&env, &admin)?;
         storage::set_limit(&env, limit);
-
-        // TODO(events): emit (Symbol("admin"), Symbol("limit")),
-        //               data = (admin, limit)
-        //               See docs/events.md — admin.limit
-
         Ok(())
     }
 
@@ -314,70 +251,20 @@ impl AlertRegistry {
         count
     }
 
-    /// Register up to `MAX_BATCH_SIZE` alert configs in a single transaction.
+    /// Return the count of live (non-removed) alert configs watching `target_contract`.
     ///
-    /// All configs share the same `owner`. Validation of every input (label
-    /// length, rules) is performed **before** any storage write, so the call
-    /// is all-or-nothing: a single invalid input causes the whole batch to
-    /// be rejected without partial side effects.
-    ///
-    /// # Auth
-    /// Requires a valid Stellar auth signature from `owner` (called once).
-    ///
-    /// # Returns
-    /// `Vec<u64>` — the assigned IDs in input order.
-    ///
-    /// # Panics
-    /// - If `inputs` is empty or exceeds `MAX_BATCH_SIZE` (20).
-    /// - If any label exceeds 128 bytes or contains an invalid rule descriptor.
-    pub fn batch_register_alerts(
-        env: Env,
-        owner: Address,
-        inputs: Vec<AlertInput>,
-    ) -> Vec<u64> {
-        owner.require_auth();
-
-        let len = inputs.len();
-        assert!(len > 0, "batch must contain at least one alert");
-        assert!(len <= MAX_BATCH_SIZE, "batch exceeds maximum size of 20");
-
-        // Validation pass — all-or-nothing before any write.
-        for i in 0..inputs.len() {
-            let input = inputs.get(i).unwrap();
-            if input.label.len() > 128 {
-                panic!("label exceeds 128 bytes");
+    /// Unlike [`get_alert_count`], this is scoped to a single watched contract and
+    /// reflects removals — it only counts entries that still exist in storage.
+    pub fn get_alert_count_for_contract(env: Env, target_contract: Address) -> u32 {
+        let ids = storage::contract_index(&env, &target_contract);
+        let mut count: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if storage::has_alert(&env, id) {
+                count += 1;
             }
-            validate_rules(&env, &input.rules);
         }
-        assert_per_owner_limit(&env, &owner);
-
-        let mut ids: Vec<u64> = vec![&env];
-        for i in 0..inputs.len() {
-            let input = inputs.get(i).unwrap();
-            let id = storage::next_id(&env);
-            let now = env.ledger().timestamp();
-            let config = AlertConfig {
-                label: input.label,
-                webhook_hash: input.webhook_hash,
-                rules: input.rules,
-                owner: owner.clone(),
-                target_contract: input.target_contract.clone(),
-                created_at: now,
-                updated_at: now,
-                active: true,
-            };
-            storage::set_alert(&env, id, &config);
-            storage::push_owner_index(&env, &owner, id);
-            storage::push_contract_index(&env, &input.target_contract, id);
-
-            env.events().publish(
-                (symbol_short!("alert"), symbol_short!("register")),
-                (id, owner.clone(), input.target_contract),
-            );
-
-            ids.push_back(id);
-        }
-        ids
+        count
     }
 }
 
@@ -457,102 +344,60 @@ mod tests {
         String::from_str(env, s)
     }
 
-    fn make_input(env: &Env, target: &Address) -> AlertInput {
-        AlertInput {
-            target_contract: target.clone(),
-            label: str(env, "alert"),
-            webhook_hash: str(env, "hash"),
-            rules: vec![env],
-        }
+    fn register(client: &AlertRegistryClient, env: &Env, owner: &Address, target: &Address) -> u64 {
+        client.register_alert(
+            owner,
+            target,
+            &str(env, "alert"),
+            &str(env, "hash"),
+            &vec![env],
+        )
     }
 
     #[test]
-    fn test_batch_register_single_returns_one_id() {
+    fn test_count_zero_for_unknown_contract() {
+        let (env, client) = setup();
+        let target = Address::generate(&env);
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
+    }
+
+    #[test]
+    fn test_count_increments_on_register() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        let ids = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids.get(0).unwrap(), 0u64);
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
+        register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 1u32);
+        register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 2u32);
     }
 
     #[test]
-    fn test_batch_register_multiple_sequential_ids() {
+    fn test_count_decrements_on_remove() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        let inputs = vec![
-            &env,
-            make_input(&env, &target),
-            make_input(&env, &target),
-            make_input(&env, &target),
-        ];
-        let ids = client.batch_register_alerts(&owner, &inputs);
-        assert_eq!(ids.len(), 3);
-        assert_eq!(ids.get(0).unwrap(), 0u64);
-        assert_eq!(ids.get(1).unwrap(), 1u64);
-        assert_eq!(ids.get(2).unwrap(), 2u64);
+        let id = register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alert_count_for_contract(&target), 1u32);
+        client.remove_alert(&owner, &id).unwrap();
+        assert_eq!(client.get_alert_count_for_contract(&target), 0u32);
     }
 
     #[test]
-    fn test_batch_register_alerts_stored_with_correct_owner() {
+    fn test_count_isolated_per_contract() {
         let (env, client) = setup();
         let owner = Address::generate(&env);
-        let target = Address::generate(&env);
+        let target_a = Address::generate(&env);
+        let target_b = Address::generate(&env);
 
-        let ids = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
-        let cfg = client.get_alert(&ids.get(0).unwrap()).unwrap();
-        assert_eq!(cfg.owner, owner);
-        assert_eq!(cfg.target_contract, target);
-        assert!(cfg.active);
-    }
+        register(&client, &env, &owner, &target_a);
+        register(&client, &env, &owner, &target_a);
+        register(&client, &env, &owner, &target_b);
 
-    #[test]
-    fn test_batch_register_updates_contract_index() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let target = Address::generate(&env);
-
-        client.batch_register_alerts(
-            &owner,
-            &vec![&env, make_input(&env, &target), make_input(&env, &target)],
-        );
-        assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
-    }
-
-    #[test]
-    fn test_batch_register_counter_persists_between_calls() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let target = Address::generate(&env);
-
-        let ids1 = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
-        let ids2 = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
-        assert_eq!(ids1.get(0).unwrap(), 0u64);
-        assert_eq!(ids2.get(0).unwrap(), 1u64);
-    }
-
-    #[test]
-    #[should_panic(expected = "at least one")]
-    fn test_batch_register_panics_on_empty() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let empty: Vec<AlertInput> = vec![&env];
-        client.batch_register_alerts(&owner, &empty);
-    }
-
-    #[test]
-    #[should_panic(expected = "maximum size")]
-    fn test_batch_register_panics_on_oversized_batch() {
-        let (env, client) = setup();
-        let owner = Address::generate(&env);
-        let target = Address::generate(&env);
-        let mut inputs: Vec<AlertInput> = vec![&env];
-        for _ in 0..=MAX_BATCH_SIZE {
-            inputs.push_back(make_input(&env, &target));
-        }
-        client.batch_register_alerts(&owner, &inputs);
+        assert_eq!(client.get_alert_count_for_contract(&target_a), 2u32);
+        assert_eq!(client.get_alert_count_for_contract(&target_b), 1u32);
     }
 }
