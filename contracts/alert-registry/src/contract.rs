@@ -45,6 +45,7 @@ impl AlertRegistry {
             created_at: now,
             updated_at: now,
             active: true,
+            pending_webhook_hash: None,
         };
 
         storage::set_alert(&env, id, &config);
@@ -128,6 +129,136 @@ impl AlertRegistry {
         // TODO(events): emit (Symbol("alert"), Symbol("webhook")),
         //               data = (config_id, caller)
         //               See docs/events.md — alert.webhook
+
+        Ok(())
+    }
+
+    /// Propose a new webhook hash for an existing alert (step 1 of 2).
+    ///
+    /// The new hash is stored in `pending_webhook_hash` and does **not** replace
+    /// the live `webhook_hash` yet. The owner must call [`confirm_webhook`] to
+    /// complete the rotation. This two-step flow prevents a window where the old
+    /// webhook is deactivated before the new one is confirmed by the off-chain
+    /// watcher.
+    ///
+    /// Calling `propose_webhook` again before confirming overwrites the previous
+    /// pending hash, allowing the owner to correct a mistake.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    ///
+    /// # Events
+    /// Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+    pub fn propose_webhook(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+        new_webhook_hash: String,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let mut config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+
+        assert_owner(&config, &caller)?;
+
+        config.pending_webhook_hash = Some(new_webhook_hash);
+        config.updated_at = env.ledger().timestamp();
+
+        storage::set_alert(&env, config_id, &config);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("wh_prop")),
+            (config_id, caller),
+        );
+
+        Ok(())
+    }
+
+    /// Confirm a pending webhook hash rotation (step 2 of 2).
+    ///
+    /// Promotes `pending_webhook_hash` to `webhook_hash` and clears the pending
+    /// field. The caller must have previously called [`propose_webhook`] for this
+    /// alert. Returns [`ContractError::NoPendingWebhook`] if no rotation is in
+    /// progress.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    /// Returns [`ContractError::NoPendingWebhook`] if no pending hash exists.
+    ///
+    /// # Events
+    /// Emits `(Symbol("alert"), Symbol("wh_conf"))` with data `(id: u64, caller: Address)`.
+    pub fn confirm_webhook(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let mut config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+
+        assert_owner(&config, &caller)?;
+
+        let pending = config
+            .pending_webhook_hash
+            .take()
+            .ok_or(ContractError::NoPendingWebhook)?;
+
+        config.webhook_hash = pending;
+        config.updated_at = env.ledger().timestamp();
+
+        storage::set_alert(&env, config_id, &config);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("wh_conf")),
+            (config_id, caller),
+        );
+
+        Ok(())
+    }
+
+    /// Extend the TTL of an alert and its index entries without modifying any data.
+    ///
+    /// This is the recommended way to keep an alert alive without triggering an
+    /// `updated_at` change (which would cause it to appear in incremental-sync
+    /// results). Call this periodically from an off-chain keeper to prevent
+    /// storage archival.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    pub fn renew_alert_ttl(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+
+        assert_owner(&config, &caller)?;
+
+        // Extend the alert entry itself.
+        storage::extend_alert_ttl(&env, config_id);
+        // Extend both index entries so they stay alive as long as the alert.
+        storage::extend_owner_index_ttl(&env, &config.owner);
+        storage::extend_contract_index_ttl(&env, &config.target_contract);
 
         Ok(())
     }

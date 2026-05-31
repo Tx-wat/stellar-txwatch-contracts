@@ -43,6 +43,9 @@ The TTL is extended on every mutating call that touches the entry:
 | `register_alert` | `Alert(id)`, `OwnerIndex`, `ContractIndex` |
 | `update_alert`   | `Alert(id)` |
 | `update_webhook` | `Alert(id)` |
+| `propose_webhook` | `Alert(id)` |
+| `confirm_webhook` | `Alert(id)` |
+| `renew_alert_ttl` | `Alert(id)`, `OwnerIndex`, `ContractIndex` — **no data change** |
 | `remove_alert`   | Entry is deleted (no TTL needed) |
 
 Read-only functions (`get_alert`, `get_alerts_for_contract`, `get_alerts_by_owner`) do **not** extend the TTL.

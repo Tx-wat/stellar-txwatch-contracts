@@ -10,6 +10,8 @@ pub enum ContractError {
     AlertNotFound = 2,
     AlreadyInitialized = 3,
     NotInitialized = 4,
+    /// Returned when `confirm_webhook` is called but no rotation is pending.
+    NoPendingWebhook = 5,
 }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
@@ -52,4 +54,11 @@ pub struct AlertConfig {
     pub updated_at: u64,
     /// Whether the alert is currently active.
     pub active: bool,
+    /// Pending webhook hash proposed via `propose_webhook` but not yet confirmed.
+    ///
+    /// `None` means no rotation is in progress. Once the owner calls
+    /// `confirm_webhook`, this value is promoted to `webhook_hash` and cleared.
+    /// This two-step flow prevents a window where the old webhook is deactivated
+    /// before the new one is confirmed by the off-chain watcher.
+    pub pending_webhook_hash: Option<String>,
 }

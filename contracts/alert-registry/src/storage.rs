@@ -40,6 +40,13 @@ pub fn has_alert(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Alert(id))
 }
 
+/// Extend the TTL of an alert entry without modifying its data.
+pub fn extend_alert_ttl(env: &Env, id: u64) {
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Alert(id), 100, 100);
+}
+
 // ── Owner index ───────────────────────────────────────────────────────────────
 
 /// Load the list of alert IDs owned by `owner`, or an empty vec.
@@ -87,6 +94,19 @@ pub fn remove_from_owner_index(env: &Env, owner: &Address, id: u64) {
         .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
 }
 
+/// Extend the TTL of the owner index without modifying its data.
+pub fn extend_owner_index_ttl(env: &Env, owner: &Address) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::OwnerIndex(owner.clone()))
+    {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+    }
+}
+
 // ── Contract index ────────────────────────────────────────────────────────────
 
 /// Load the list of alert IDs watching `target`, or an empty vec.
@@ -132,6 +152,19 @@ pub fn remove_from_contract_index(env: &Env, target: &Address, id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+}
+
+/// Extend the TTL of the contract index without modifying its data.
+pub fn extend_contract_index_ttl(env: &Env, target: &Address) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::ContractIndex(target.clone()))
+    {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+    }
 }
 
 // ── Batch reads ───────────────────────────────────────────────────────────────
