@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/ttl.md` documenting TTL values and their implications (#77)
 - Inline rustdoc comments on all public and key private functions (#78)
 - Expanded `.gitignore` to exclude build artifacts and test snapshots
+- `bindings/watcher-registry` — TypeScript bindings package `@tx-wat/watcher-registry` generated via `stellar contract bindings typescript`
+- `.github/workflows/publish-bindings.yml` — CI workflow that generates and publishes TypeScript bindings to npm on every GitHub release
+- `docs/ecosystem-submission.md` — step-by-step guide for submitting to the Stellar Developer Tools ecosystem listing and the `stellar/soroban-examples` repository
+- `contracts/watcher-registry/README.md` and `contracts/alert-registry/README.md` — per-contract READMEs required for the soroban-examples submission
 
 ## [0.1.0] - 2025-05-28
 
