@@ -1,5 +1,5 @@
-use crate::contract::AlertRegistry;
-use crate::types::ContractError;
+use crate::AlertRegistry;
+use crate::ContractError;
 use crate::AlertRegistryClient;
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String, Vec};
 
@@ -256,22 +256,24 @@ fn test_get_nonexistent_alert() {
 #[test]
 fn test_get_alerts_for_contract_empty() {
     let (env, client) = setup();
+    let querier = Address::generate(&env);
     let target = Address::generate(&env);
-    assert_eq!(client.get_alerts_for_contract(&target).len(), 0);
+    assert_eq!(client.get_alerts_for_contract(&querier, &target).unwrap().len(), 0);
 }
 
 // 8. Index queries
 #[test]
 fn test_index_queries() {
     let (env, client) = setup();
+    let querier = Address::generate(&env);
     let owner = Address::generate(&env);
     let target = Address::generate(&env);
 
     client.register_alert(&owner, &target, &str(&env, "A1"), &str(&env, "h1"), &vec![&env]);
     client.register_alert(&owner, &target, &str(&env, "A2"), &str(&env, "h2"), &vec![&env]);
 
-    assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
-    assert_eq!(client.get_alerts_by_owner(&owner).len(), 2);
+    assert_eq!(client.get_alerts_for_contract(&querier, &target).unwrap().len(), 2);
+    assert_eq!(client.get_alerts_by_owner(&querier, &owner).unwrap().len(), 2);
 }
 
 // 9. get_alert_count is monotonic
