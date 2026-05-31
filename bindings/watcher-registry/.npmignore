@@ -1,0 +1,9 @@
+# Source TypeScript — consumers use the compiled dist/
+src/
+
+# TypeScript config
+tsconfig.json
+
+# Dev tooling
+node_modules/
+*.log
