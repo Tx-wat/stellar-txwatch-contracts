@@ -34,15 +34,15 @@ impl AlertRegistry {
         label: String,
         webhook_hash: String,
         rules: Vec<String>,
-    ) -> u64 {
+    ) -> Result<u64, ContractError> {
         owner.require_auth();
 
         if label.len() > 128 {
-            panic!("label exceeds 128 bytes");
+            return Err(ContractError::LabelTooLong);
         }
 
-        validate_rules(&env, &rules);
-        assert_per_owner_limit(&env, &owner);
+        validate_rules(&env, &rules)?;
+        assert_per_owner_limit(&env, &owner)?;
 
         let id = storage::next_id(&env);
         let now = env.ledger().timestamp();
@@ -60,8 +60,8 @@ impl AlertRegistry {
         };
 
         storage::set_alert(&env, id, &config);
-        storage::push_owner_index(&env, &owner, id);
-        storage::push_contract_index(&env, &target_contract, id);
+        storage::push_owner_index(&env, &owner, id)?;
+        storage::push_contract_index(&env, &target_contract, id)?;
 
         env.events().publish(
             (symbol_short!("alert"), symbol_short!("register")),
@@ -417,7 +417,7 @@ fn assert_admin(env: &Env, caller: &Address) -> Result<(), ContractError> {
     }
 }
 
-fn assert_per_owner_limit(env: &Env, owner: &Address) {
+fn assert_per_owner_limit(env: &Env, owner: &Address) -> Result<(), ContractError> {
     let limit = storage::get_limit(env);
     if limit > 0 {
         let ids = storage::owner_index(env, owner);
@@ -428,23 +428,25 @@ fn assert_per_owner_limit(env: &Env, owner: &Address) {
             }
         }
         if count >= limit {
-            panic!("owner alert limit exceeded");
+            return Err(ContractError::OwnerAlertLimitExceeded);
         }
     }
+    Ok(())
 }
 
-fn validate_rules(env: &Env, rules: &Vec<String>) {
+fn validate_rules(env: &Env, rules: &Vec<String>) -> Result<(), ContractError> {
     if rules.len() > 50 {
-        panic!("too many rules: maximum is 50");
+        return Err(ContractError::TooManyRules);
     }
     let transfer = String::from_str(env, "rule:transfer");
     let mint = String::from_str(env, "rule:mint");
     for i in 0..rules.len() {
         let rule = rules.get(i).unwrap();
         if rule != transfer && rule != mint {
-            panic!("invalid rule descriptor");
+            return Err(ContractError::InvalidRuleDescriptor);
         }
     }
+    Ok(())
 }
 
 fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: &Address) {
@@ -476,13 +478,15 @@ mod tests {
     }
 
     fn register(client: &AlertRegistryClient, env: &Env, owner: &Address, target: &Address) -> u64 {
-        client.register_alert(
-            owner,
-            target,
-            &str(env, "alert"),
-            &str(env, "hash"),
-            &vec![env],
-        )
+        client
+            .register_alert(
+                owner,
+                target,
+                &str(env, "alert"),
+                &str(env, "hash"),
+                &vec![env],
+            )
+            .unwrap()
     }
 
     #[test]

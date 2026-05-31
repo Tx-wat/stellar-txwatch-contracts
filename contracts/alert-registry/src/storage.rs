@@ -1,6 +1,6 @@
 use soroban_sdk::{symbol_short, vec, Address, Env, Vec};
 
-use crate::types::{AlertConfig, DataKey};
+use crate::types::{AlertConfig, ContractError, DataKey};
 use crate::{DEFAULT_TTL};
 
 // ── ID counter ────────────────────────────────────────────────────────────────
@@ -61,11 +61,11 @@ pub fn owner_index(env: &Env, owner: &Address) -> Vec<u64> {
 /// Append `id` to the owner's index and persist it with a refreshed TTL.
 ///
 /// Panics if `id` is already present to enforce index uniqueness.
-pub fn push_owner_index(env: &Env, owner: &Address, id: u64) {
+pub fn push_owner_index(env: &Env, owner: &Address, id: u64) -> Result<(), ContractError> {
     let mut ids = owner_index(env, owner);
     for i in 0..ids.len() {
         if ids.get(i).unwrap() == id {
-            panic!("duplicate alert id in owner index");
+            return Err(ContractError::DuplicateAlertId);
         }
     }
     ids.push_back(id);
@@ -75,6 +75,7 @@ pub fn push_owner_index(env: &Env, owner: &Address, id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
+    Ok(())
 }
 
 /// Remove `id` from the owner's index and persist the updated list.
@@ -121,11 +122,11 @@ pub fn contract_index(env: &Env, target: &Address) -> Vec<u64> {
 /// Append `id` to the contract's index and persist it with a refreshed TTL.
 ///
 /// Panics if `id` is already present to enforce index uniqueness.
-pub fn push_contract_index(env: &Env, target: &Address, id: u64) {
+pub fn push_contract_index(env: &Env, target: &Address, id: u64) -> Result<(), ContractError> {
     let mut ids = contract_index(env, target);
     for i in 0..ids.len() {
         if ids.get(i).unwrap() == id {
-            panic!("duplicate alert id in contract index");
+            return Err(ContractError::DuplicateAlertId);
         }
     }
     ids.push_back(id);
@@ -135,6 +136,7 @@ pub fn push_contract_index(env: &Env, target: &Address, id: u64) {
     env.storage()
         .persistent()
         .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
+    Ok(())
 }
 
 /// Remove `id` from the contract's index and persist the updated list.
