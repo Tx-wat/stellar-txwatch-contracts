@@ -469,3 +469,355 @@ fn test_soroban_string_8192_bytes_is_constructible() {
     let s = str_repeat(&env, 'x', 8192);
     assert_eq!(s.len(), 8192);
 }
+
+// ── Feature: renew_alert_ttl ──────────────────────────────────────────────────
+
+// renew_alert_ttl — happy path: owner can renew without changing data
+#[test]
+fn test_renew_alert_ttl_happy_path() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env, str(&env, "rule:transfer")],
+    );
+
+    let before = client.get_alert(&id).unwrap();
+
+    // Advance time — renew should NOT change updated_at
+    env.ledger().with_mut(|li| li.timestamp += 100);
+
+    assert_eq!(client.try_renew_alert_ttl(&owner, &id).unwrap(), Ok(()));
+
+    let after = client.get_alert(&id).unwrap();
+
+    // Data must be completely unchanged
+    assert_eq!(after.label, before.label);
+    assert_eq!(after.webhook_hash, before.webhook_hash);
+    assert_eq!(after.rules, before.rules);
+    assert_eq!(after.active, before.active);
+    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(after.created_at, before.created_at);
+}
+
+// renew_alert_ttl — unauthorized caller is rejected
+#[test]
+fn test_renew_alert_ttl_unauthorized() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    assert_eq!(
+        client
+            .try_renew_alert_ttl(&attacker, &id)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::Unauthorized
+    );
+}
+
+// renew_alert_ttl — nonexistent alert returns AlertNotFound
+#[test]
+fn test_renew_alert_ttl_not_found() {
+    let (env, client) = setup();
+    let caller = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_renew_alert_ttl(&caller, &999u64)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::AlertNotFound
+    );
+}
+
+// ── Feature: propose_webhook / confirm_webhook ────────────────────────────────
+
+// propose_webhook — happy path: pending hash is stored, live hash unchanged
+#[test]
+fn test_propose_webhook_stores_pending_hash() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "old-hash"),
+        &vec![&env],
+    );
+
+    assert_eq!(
+        client
+            .try_propose_webhook(&owner, &id, &str(&env, "new-hash"))
+            .unwrap(),
+        Ok(())
+    );
+
+    let cfg = client.get_alert(&id).unwrap();
+    // Live hash must still be the original
+    assert_eq!(cfg.webhook_hash, str(&env, "old-hash"));
+    // Pending hash must be set
+    assert_eq!(cfg.pending_webhook_hash, Some(str(&env, "new-hash")));
+}
+
+// confirm_webhook — happy path: pending hash is promoted to live hash
+#[test]
+fn test_confirm_webhook_promotes_pending_hash() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "old-hash"),
+        &vec![&env],
+    );
+
+    client.propose_webhook(&owner, &id, &str(&env, "new-hash")).unwrap();
+
+    assert_eq!(client.try_confirm_webhook(&owner, &id).unwrap(), Ok(()));
+
+    let cfg = client.get_alert(&id).unwrap();
+    // Live hash must now be the new one
+    assert_eq!(cfg.webhook_hash, str(&env, "new-hash"));
+    // Pending hash must be cleared
+    assert!(cfg.pending_webhook_hash.is_none());
+}
+
+// confirm_webhook — returns NoPendingWebhook when no rotation is in progress
+#[test]
+fn test_confirm_webhook_no_pending_returns_error() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    assert_eq!(
+        client
+            .try_confirm_webhook(&owner, &id)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::NoPendingWebhook
+    );
+}
+
+// propose_webhook — unauthorized caller is rejected
+#[test]
+fn test_propose_webhook_unauthorized() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    assert_eq!(
+        client
+            .try_propose_webhook(&attacker, &id, &str(&env, "evil-hash"))
+            .unwrap_err()
+            .unwrap(),
+        ContractError::Unauthorized
+    );
+}
+
+// confirm_webhook — unauthorized caller is rejected
+#[test]
+fn test_confirm_webhook_unauthorized() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    client.propose_webhook(&owner, &id, &str(&env, "new-hash")).unwrap();
+
+    assert_eq!(
+        client
+            .try_confirm_webhook(&attacker, &id)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::Unauthorized
+    );
+}
+
+// propose_webhook — nonexistent alert returns AlertNotFound
+#[test]
+fn test_propose_webhook_not_found() {
+    let (env, client) = setup();
+    let caller = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_propose_webhook(&caller, &999u64, &str(&env, "hash"))
+            .unwrap_err()
+            .unwrap(),
+        ContractError::AlertNotFound
+    );
+}
+
+// confirm_webhook — nonexistent alert returns AlertNotFound
+#[test]
+fn test_confirm_webhook_not_found() {
+    let (env, client) = setup();
+    let caller = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_confirm_webhook(&caller, &999u64)
+            .unwrap_err()
+            .unwrap(),
+        ContractError::AlertNotFound
+    );
+}
+
+// propose_webhook — calling propose twice overwrites the pending hash
+#[test]
+fn test_propose_webhook_overwrites_previous_pending() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "original"),
+        &vec![&env],
+    );
+
+    client.propose_webhook(&owner, &id, &str(&env, "first-pending")).unwrap();
+    client.propose_webhook(&owner, &id, &str(&env, "second-pending")).unwrap();
+
+    let cfg = client.get_alert(&id).unwrap();
+    assert_eq!(cfg.pending_webhook_hash, Some(str(&env, "second-pending")));
+    // Live hash still unchanged
+    assert_eq!(cfg.webhook_hash, str(&env, "original"));
+}
+
+// Full rotation flow: propose → confirm → propose again → confirm again
+#[test]
+fn test_webhook_rotation_full_cycle() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "v1"),
+        &vec![&env],
+    );
+
+    // First rotation
+    client.propose_webhook(&owner, &id, &str(&env, "v2")).unwrap();
+    client.confirm_webhook(&owner, &id).unwrap();
+    let cfg = client.get_alert(&id).unwrap();
+    assert_eq!(cfg.webhook_hash, str(&env, "v2"));
+    assert!(cfg.pending_webhook_hash.is_none());
+
+    // Second rotation
+    client.propose_webhook(&owner, &id, &str(&env, "v3")).unwrap();
+    client.confirm_webhook(&owner, &id).unwrap();
+    let cfg = client.get_alert(&id).unwrap();
+    assert_eq!(cfg.webhook_hash, str(&env, "v3"));
+    assert!(cfg.pending_webhook_hash.is_none());
+}
+
+// propose_webhook emits a wh_prop event
+#[test]
+fn test_propose_webhook_emits_event() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    client.propose_webhook(&owner, &id, &str(&env, "new-hash")).unwrap();
+
+    assert!(!env.events().all().is_empty());
+}
+
+// confirm_webhook emits a wh_conf event
+#[test]
+fn test_confirm_webhook_emits_event() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    client.propose_webhook(&owner, &id, &str(&env, "new-hash")).unwrap();
+    client.confirm_webhook(&owner, &id).unwrap();
+
+    assert!(!env.events().all().is_empty());
+}
+
+// pending_webhook_hash is None on fresh registration
+#[test]
+fn test_pending_webhook_hash_none_on_registration() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &str(&env, "hash"),
+        &vec![&env],
+    );
+
+    let cfg = client.get_alert(&id).unwrap();
+    assert!(cfg.pending_webhook_hash.is_none());
+}

@@ -33,6 +33,7 @@ Source: `contracts/alert-registry/src/lib.rs`
 | `created_at` | `u64` | Ledger timestamp at registration |
 | `updated_at` | `u64` | Ledger timestamp of the most recent update |
 | `active` | `bool` | Whether the alert is currently active |
+| `pending_webhook_hash` | `Option<String>` | Pending webhook hash proposed via `propose_webhook`, not yet confirmed. `None` when no rotation is in progress. |
 
 ### TTL Behavior
 
@@ -43,6 +44,9 @@ All four persistent key variants (`Alert`, `AlertActive`, `OwnerIndex`, `Contrac
 | `register_alert` | `Alert(id)`, `AlertActive(id)`, `OwnerIndex(owner)`, `ContractIndex(target)` |
 | `update_alert` | `Alert(id)`, `AlertActive(id)` |
 | `update_webhook` | `Alert(id)` |
+| `propose_webhook` | `Alert(id)` |
+| `confirm_webhook` | `Alert(id)` |
+| `renew_alert_ttl` | `Alert(id)`, `OwnerIndex(owner)`, `ContractIndex(target)` — data unchanged |
 | `remove_alert` | Entries deleted — no TTL extension |
 
 Read-only functions (`get_alert`, `get_alerts_for_contract`, `get_alerts_by_owner`, paginated variants, `get_alert_count`) do **not** extend any TTL.
