@@ -1,0 +1,36 @@
+{
+  "name": "@tx-wat/alert-registry-bindings",
+  "version": "0.1.0",
+  "description": "TypeScript bindings for the AlertRegistry Soroban smart contract",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "stellar contract bindings typescript --wasm ../../target/wasm32-unknown-unknown/release/alert_registry.wasm --output-dir ./dist --contract-id placeholder --overwrite",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "stellar",
+    "soroban",
+    "smart-contract",
+    "alert-registry",
+    "typescript",
+    "bindings"
+  ],
+  "author": "Tx-wat",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tx-wat/stellar-txwatch-contracts.git",
+    "directory": "bindings/alert-registry"
+  },
+  "peerDependencies": {
+    "@stellar/stellar-sdk": "^12.0.0"
+  },
+  "devDependencies": {
+    "@stellar/stellar-sdk": "^12.0.0",
+    "typescript": "^5.0.0"
+  }
+}

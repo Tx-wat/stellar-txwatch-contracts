@@ -1,0 +1,115 @@
+name: Publish TypeScript Bindings
+
+# Runs on every published GitHub release (e.g. v0.1.0).
+# Generates TypeScript bindings from the compiled WASM using
+# `stellar contract bindings typescript`, then publishes the
+# resulting package to npm under @tx-wat/watcher-registry.
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish-bindings:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Rust / WASM build ────────────────────────────────────────────────────
+      - name: Install Rust wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build contracts (WASM)
+        run: cargo build --release --target wasm32-unknown-unknown
+
+      # ── Stellar CLI ──────────────────────────────────────────────────────────
+      - name: Install Stellar CLI
+        run: |
+          curl -sSL https://github.com/stellar/stellar-cli/releases/latest/download/stellar-cli-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin stellar
+          stellar --version
+
+      # ── Generate TypeScript bindings ─────────────────────────────────────────
+      # `stellar contract bindings typescript` reads the WASM contract spec and
+      # emits a fully-typed npm package into the output directory.
+      - name: Generate WatcherRegistry TypeScript bindings
+        run: |
+          stellar contract bindings typescript \
+            --wasm target/wasm32-unknown-unknown/release/watcher_registry.wasm \
+            --contract-id CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
+            --output-dir bindings/watcher-registry \
+            --overwrite
+
+      # ── Merge hand-maintained package metadata ───────────────────────────────
+      # The generator writes its own package.json; we overlay our curated
+      # metadata (name, version, description, keywords, repository, etc.)
+      # so the published package has the correct npm identity.
+      - name: Overlay package.json metadata
+        run: |
+          node - <<'EOF'
+          const fs   = require("fs");
+          const path = "bindings/watcher-registry/package.json";
+
+          // Generated package.json from stellar CLI
+          const generated = JSON.parse(fs.readFileSync(path, "utf8"));
+
+          // Our curated metadata
+          const meta = {
+            name:        "@tx-wat/watcher-registry",
+            version:     process.env.RELEASE_TAG.replace(/^v/, ""),
+            description: "TypeScript bindings for the stellar-txwatch WatcherRegistry Soroban contract",
+            keywords:    ["stellar", "soroban", "smart-contract", "watcher-registry", "txwatch", "blockchain"],
+            author:      "Tx-wat <https://github.com/Tx-wat>",
+            license:     "MIT",
+            repository: {
+              type:      "git",
+              url:       "https://github.com/Tx-wat/stellar-txwatch-contracts.git",
+              directory: "bindings/watcher-registry",
+            },
+            homepage: "https://github.com/Tx-wat/stellar-txwatch-contracts#readme",
+            bugs:     { url: "https://github.com/Tx-wat/stellar-txwatch-contracts/issues" },
+          };
+
+          const merged = { ...generated, ...meta };
+          fs.writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+          console.log("package.json merged:", merged.name, merged.version);
+          EOF
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+
+      # ── Node.js / npm setup ──────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # ── Install deps and build ───────────────────────────────────────────────
+      - name: Install dependencies
+        working-directory: bindings/watcher-registry
+        run: npm install
+
+      - name: Build TypeScript package
+        working-directory: bindings/watcher-registry
+        run: npm run build
+
+      # ── Publish to npm ───────────────────────────────────────────────────────
+      - name: Publish to npm
+        working-directory: bindings/watcher-registry
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
