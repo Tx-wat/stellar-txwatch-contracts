@@ -1,5 +1,7 @@
 use soroban_sdk::{contracttype, contracterror, Address, String, Vec};
 
+pub const MAX_BATCH_SIZE: u32 = 20;
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -28,6 +30,24 @@ pub enum DataKey {
 }
 
 // ── Data types ────────────────────────────────────────────────────────────────
+
+/// Input payload for a single alert in a `batch_register_alerts` call.
+///
+/// All fields mirror the per-alert parameters of `register_alert`; the owner
+/// is taken from the `caller` argument of `batch_register_alerts` instead of
+/// being stored here.
+#[contracttype]
+#[derive(Clone)]
+pub struct AlertInput {
+    /// Contract address to watch.
+    pub target_contract: Address,
+    /// Human-readable label (max 128 bytes).
+    pub label: String,
+    /// SHA-256 hex digest of the webhook URL.
+    pub webhook_hash: String,
+    /// Rule identifiers that trigger the alert.
+    pub rules: Vec<String>,
+}
 
 /// On-chain configuration for a single alert.
 ///

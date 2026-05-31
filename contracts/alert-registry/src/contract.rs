@@ -1,7 +1,7 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, vec, Address, Env, String, Vec};
 
 use crate::storage;
-use crate::types::{AlertConfig, ContractError};
+use crate::types::{AlertConfig, AlertInput, ContractError, MAX_BATCH_SIZE};
 
 #[contract]
 pub struct AlertRegistry;
@@ -313,6 +313,72 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Register up to `MAX_BATCH_SIZE` alert configs in a single transaction.
+    ///
+    /// All configs share the same `owner`. Validation of every input (label
+    /// length, rules) is performed **before** any storage write, so the call
+    /// is all-or-nothing: a single invalid input causes the whole batch to
+    /// be rejected without partial side effects.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `owner` (called once).
+    ///
+    /// # Returns
+    /// `Vec<u64>` — the assigned IDs in input order.
+    ///
+    /// # Panics
+    /// - If `inputs` is empty or exceeds `MAX_BATCH_SIZE` (20).
+    /// - If any label exceeds 128 bytes or contains an invalid rule descriptor.
+    pub fn batch_register_alerts(
+        env: Env,
+        owner: Address,
+        inputs: Vec<AlertInput>,
+    ) -> Vec<u64> {
+        owner.require_auth();
+
+        let len = inputs.len();
+        assert!(len > 0, "batch must contain at least one alert");
+        assert!(len <= MAX_BATCH_SIZE, "batch exceeds maximum size of 20");
+
+        // Validation pass — all-or-nothing before any write.
+        for i in 0..inputs.len() {
+            let input = inputs.get(i).unwrap();
+            if input.label.len() > 128 {
+                panic!("label exceeds 128 bytes");
+            }
+            validate_rules(&env, &input.rules);
+        }
+        assert_per_owner_limit(&env, &owner);
+
+        let mut ids: Vec<u64> = vec![&env];
+        for i in 0..inputs.len() {
+            let input = inputs.get(i).unwrap();
+            let id = storage::next_id(&env);
+            let now = env.ledger().timestamp();
+            let config = AlertConfig {
+                label: input.label,
+                webhook_hash: input.webhook_hash,
+                rules: input.rules,
+                owner: owner.clone(),
+                target_contract: input.target_contract.clone(),
+                created_at: now,
+                updated_at: now,
+                active: true,
+            };
+            storage::set_alert(&env, id, &config);
+            storage::push_owner_index(&env, &owner, id);
+            storage::push_contract_index(&env, &input.target_contract, id);
+
+            env.events().publish(
+                (symbol_short!("alert"), symbol_short!("register")),
+                (id, owner.clone(), input.target_contract),
+            );
+
+            ids.push_back(id);
+        }
+        ids
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -372,4 +438,121 @@ fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: 
         (symbol_short!("alert"), symbol_short!("remove")),
         (config_id, caller.clone()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    fn setup() -> (Env, AlertRegistryClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AlertRegistry, ());
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        (env, client)
+    }
+
+    fn str(env: &Env, s: &str) -> String {
+        String::from_str(env, s)
+    }
+
+    fn make_input(env: &Env, target: &Address) -> AlertInput {
+        AlertInput {
+            target_contract: target.clone(),
+            label: str(env, "alert"),
+            webhook_hash: str(env, "hash"),
+            rules: vec![env],
+        }
+    }
+
+    #[test]
+    fn test_batch_register_single_returns_one_id() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let ids = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids.get(0).unwrap(), 0u64);
+    }
+
+    #[test]
+    fn test_batch_register_multiple_sequential_ids() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let inputs = vec![
+            &env,
+            make_input(&env, &target),
+            make_input(&env, &target),
+            make_input(&env, &target),
+        ];
+        let ids = client.batch_register_alerts(&owner, &inputs);
+        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.get(0).unwrap(), 0u64);
+        assert_eq!(ids.get(1).unwrap(), 1u64);
+        assert_eq!(ids.get(2).unwrap(), 2u64);
+    }
+
+    #[test]
+    fn test_batch_register_alerts_stored_with_correct_owner() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let ids = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
+        let cfg = client.get_alert(&ids.get(0).unwrap()).unwrap();
+        assert_eq!(cfg.owner, owner);
+        assert_eq!(cfg.target_contract, target);
+        assert!(cfg.active);
+    }
+
+    #[test]
+    fn test_batch_register_updates_contract_index() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        client.batch_register_alerts(
+            &owner,
+            &vec![&env, make_input(&env, &target), make_input(&env, &target)],
+        );
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
+    }
+
+    #[test]
+    fn test_batch_register_counter_persists_between_calls() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+
+        let ids1 = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
+        let ids2 = client.batch_register_alerts(&owner, &vec![&env, make_input(&env, &target)]);
+        assert_eq!(ids1.get(0).unwrap(), 0u64);
+        assert_eq!(ids2.get(0).unwrap(), 1u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "at least one")]
+    fn test_batch_register_panics_on_empty() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let empty: Vec<AlertInput> = vec![&env];
+        client.batch_register_alerts(&owner, &empty);
+    }
+
+    #[test]
+    #[should_panic(expected = "maximum size")]
+    fn test_batch_register_panics_on_oversized_batch() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let mut inputs: Vec<AlertInput> = vec![&env];
+        for _ in 0..=MAX_BATCH_SIZE {
+            inputs.push_back(make_input(&env, &target));
+        }
+        client.batch_register_alerts(&owner, &inputs);
+    }
 }
