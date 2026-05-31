@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, symbol_short, vec, Address, Env, String, Vec};
 
 use crate::storage;
 use crate::types::{AlertConfig, ContractError};
@@ -313,6 +313,60 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Remove up to 20 alert configs owned by `caller` in a single transaction.
+    ///
+    /// Two-pass design: all ownership checks are performed **before** any storage
+    /// mutation, so the call is all-or-nothing — a single unauthorized ID causes
+    /// the whole batch to be rejected without partial removal.
+    ///
+    /// Non-existent IDs are silently skipped (idempotent). Returns the count of
+    /// configs that were actually removed (excluding skipped IDs).
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller` (called once).
+    ///
+    /// # Returns
+    /// `u32` — number of configs actually removed.
+    ///
+    /// # Errors
+    /// Returns `ContractError::Unauthorized` if any **existing** config in the
+    /// batch is not owned by `caller`.
+    ///
+    /// # Panics
+    /// - If `config_ids` is empty or contains more than 20 entries.
+    pub fn batch_remove_alerts(
+        env: Env,
+        caller: Address,
+        config_ids: Vec<u64>,
+    ) -> Result<u32, ContractError> {
+        caller.require_auth();
+
+        let len = config_ids.len();
+        assert!(len > 0, "config_ids must not be empty");
+        assert!(len <= 20, "batch exceeds maximum size of 20");
+
+        // Ownership validation pass — reject before any mutation.
+        for i in 0..config_ids.len() {
+            let id = config_ids.get(i).unwrap();
+            if let Some(config) = storage::get_alert(&env, id) {
+                assert_owner(&config, &caller)?;
+            }
+            // Non-existent IDs are silently accepted.
+        }
+
+        // Mutation pass.
+        let mut removed: u32 = 0;
+        for i in 0..config_ids.len() {
+            let id = config_ids.get(i).unwrap();
+            if let Some(config) = storage::get_alert(&env, id) {
+                remove_alert_record(&env, &config, id, &caller);
+                removed += 1;
+            }
+        }
+
+        Ok(removed)
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
@@ -372,4 +426,112 @@ fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: 
         (symbol_short!("alert"), symbol_short!("remove")),
         (config_id, caller.clone()),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, vec, Env, String};
+
+    fn setup() -> (Env, AlertRegistryClient<'static>) {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AlertRegistry, ());
+        let client = AlertRegistryClient::new(&env, &contract_id);
+        (env, client)
+    }
+
+    fn str(env: &Env, s: &str) -> String {
+        String::from_str(env, s)
+    }
+
+    fn register(client: &AlertRegistryClient, env: &Env, owner: &Address, target: &Address) -> u64 {
+        client.register_alert(
+            owner,
+            target,
+            &str(env, "alert"),
+            &str(env, "hash"),
+            &vec![env],
+        )
+    }
+
+    #[test]
+    fn test_batch_remove_single_returns_one() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id = register(&client, &env, &owner, &target);
+        let removed = client.batch_remove_alerts(&owner, &vec![&env, id]).unwrap();
+        assert_eq!(removed, 1u32);
+        assert!(client.get_alert(&id).is_none());
+    }
+
+    #[test]
+    fn test_batch_remove_multiple_returns_count() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id0 = register(&client, &env, &owner, &target);
+        let id1 = register(&client, &env, &owner, &target);
+        let id2 = register(&client, &env, &owner, &target);
+        let removed = client.batch_remove_alerts(&owner, &vec![&env, id0, id1, id2]).unwrap();
+        assert_eq!(removed, 3u32);
+    }
+
+    #[test]
+    fn test_batch_remove_skips_nonexistent_ids() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id = register(&client, &env, &owner, &target);
+        // ID 99 does not exist — must be silently skipped
+        let removed = client.batch_remove_alerts(&owner, &vec![&env, id, 99u64]).unwrap();
+        assert_eq!(removed, 1u32);
+    }
+
+    #[test]
+    fn test_batch_remove_updates_contract_index() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id0 = register(&client, &env, &owner, &target);
+        register(&client, &env, &owner, &target);
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 2);
+        client.batch_remove_alerts(&owner, &vec![&env, id0]).unwrap();
+        assert_eq!(client.get_alerts_for_contract(&target).len(), 1);
+    }
+
+    #[test]
+    fn test_batch_remove_unauthorized_rejects_whole_batch() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let attacker = Address::generate(&env);
+        let target = Address::generate(&env);
+        let id = register(&client, &env, &owner, &target);
+        let result = client.try_batch_remove_alerts(&attacker, &vec![&env, id]);
+        assert_eq!(result.unwrap_err().unwrap(), ContractError::Unauthorized);
+        // Alert must still exist (no partial removal)
+        assert!(client.get_alert(&id).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "must not be empty")]
+    fn test_batch_remove_panics_on_empty() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let empty: Vec<u64> = vec![&env];
+        client.batch_remove_alerts(&owner, &empty).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "maximum size")]
+    fn test_batch_remove_panics_on_oversized_batch() {
+        let (env, client) = setup();
+        let owner = Address::generate(&env);
+        let mut ids: Vec<u64> = vec![&env];
+        for i in 0u64..=20u64 {
+            ids.push_back(i);
+        }
+        client.batch_remove_alerts(&owner, &ids).unwrap();
+    }
 }
