@@ -19,7 +19,7 @@ jobs:
 
       # ── Rust / WASM build ────────────────────────────────────────────────────
       - name: Install Rust wasm32 target
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
           targets: wasm32-unknown-unknown
 

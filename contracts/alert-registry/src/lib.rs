@@ -6,12 +6,6 @@ use soroban_sdk::{
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ContractError {
-    InvalidWebhookHash = 1,
-}
-
 // ── Storage keys ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -62,6 +56,10 @@ pub enum ContractError {
     /// Returned when a watcher registry is configured and the querying address
     /// is not a registered watcher.
     NotAWatcher = 5,
+    /// Returned when `webhook_hash` is not exactly 64 hex characters.
+    InvalidWebhookHash = 6,
+    /// Returned when `confirm_webhook` is called but no rotation is pending.
+    NoPendingWebhook = 7,
 }
 
 // ── Data types ───────────────────────────────────────────────────────────────

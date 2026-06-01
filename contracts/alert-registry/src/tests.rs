@@ -835,3 +835,74 @@ fn test_pending_webhook_hash_none_on_registration() {
     let cfg = client.get_alert(&id).unwrap();
     assert!(cfg.pending_webhook_hash.is_none());
 }
+
+// ── Issue #54: webhook_hash length boundary tests ─────────────────────────────
+//
+// The contract enforces `webhook_hash.len() == 64` (a SHA-256 hex digest).
+// 64 chars is both the minimum and maximum valid length.
+
+// Exactly 64 hex chars — the only valid length — must succeed.
+#[test]
+fn test_register_alert_max_length_webhook_hash() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    // 64 lowercase hex characters (a valid SHA-256 hex digest length)
+    let hash64 = str_repeat(&env, 'a', 64);
+
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "Alert"),
+        &hash64,
+        &vec![&env],
+    );
+
+    let cfg = client.get_alert(&id).unwrap();
+    assert_eq!(cfg.webhook_hash, hash64);
+}
+
+// 65 chars (one over the limit) must be rejected.
+#[test]
+fn test_register_alert_webhook_hash_too_long() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_register_alert(
+                &owner,
+                &target,
+                &str(&env, "Alert"),
+                &str_repeat(&env, 'a', 65),
+                &vec![&env],
+            )
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidWebhookHash
+    );
+}
+
+// 63 chars (one under the limit) must also be rejected.
+#[test]
+fn test_register_alert_webhook_hash_too_short() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    assert_eq!(
+        client
+            .try_register_alert(
+                &owner,
+                &target,
+                &str(&env, "Alert"),
+                &str_repeat(&env, 'a', 63),
+                &vec![&env],
+            )
+            .unwrap_err()
+            .unwrap(),
+        ContractError::InvalidWebhookHash
+    );
+}
