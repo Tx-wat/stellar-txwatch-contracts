@@ -313,6 +313,18 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Get the count of existing (non-removed) alerts owned by `owner` without fetching full configs.
+    pub fn get_alert_count_by_owner(env: Env, owner: Address) -> u32 {
+        let ids = storage::owner_index(&env, &owner);
+        let mut count: u32 = 0;
+        for i in 0..ids.len() {
+            if storage::has_alert(&env, ids.get(i).unwrap()) {
+                count += 1;
+            }
+        }
+        count
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
