@@ -13,8 +13,11 @@ pub enum ContractError {
     AlreadyInitialized = 3,
     NotInitialized = 4,
     /// Returned when `confirm_webhook` is called but no rotation is pending.
-    NoPendingWebhook = 5,
-}
+    NoPendingWebhook = 5,    LabelTooLong = 6,
+    TooManyRules = 7,
+    InvalidRuleDescriptor = 8,
+    OwnerAlertLimitExceeded = 9,
+    DuplicateAlertId = 10,}
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
