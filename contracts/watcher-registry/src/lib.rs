@@ -15,6 +15,8 @@ pub enum ContractError {
     NotInitialized = 3,
     /// Returned when trying to remove the last admin, which would lock the contract.
     LastAdmin = 4,
+    /// Returned when remove_watcher is called with an address not in the watcher list.
+    WatcherNotFound = 5,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -217,6 +219,10 @@ impl WatcherRegistry {
                 removed = true;
             }
         }
+        if !removed {
+            return Err(ContractError::WatcherNotFound);
+        }
+
         env.storage().instance().set(&DataKey::Watchers, &updated);
 
         env.events().publish(
