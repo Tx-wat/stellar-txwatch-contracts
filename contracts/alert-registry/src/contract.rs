@@ -313,6 +313,44 @@ impl AlertRegistry {
         }
         count
     }
+
+    /// Pause an alert by setting its active flag to false.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must be the owner.
+    pub fn pause_alert(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let mut config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+        assert_owner(&config, &caller)?;
+        config.active = false;
+        config.updated_at = env.ledger().timestamp();
+        storage::set_alert(&env, config_id, &config);
+        Ok(())
+    }
+
+    /// Resume an alert by setting its active flag to true.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must be the owner.
+    pub fn resume_alert(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+        let mut config = storage::get_alert(&env, config_id)
+            .ok_or(ContractError::AlertNotFound)?;
+        assert_owner(&config, &caller)?;
+        config.active = true;
+        config.updated_at = env.ledger().timestamp();
+        storage::set_alert(&env, config_id, &config);
+        Ok(())
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
