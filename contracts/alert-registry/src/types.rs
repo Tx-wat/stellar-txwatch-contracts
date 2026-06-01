@@ -1,5 +1,7 @@
 use soroban_sdk::{contracttype, contracterror, Address, String, Vec};
 
+pub const MAX_BATCH_SIZE: u32 = 20;
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -10,7 +12,12 @@ pub enum ContractError {
     AlertNotFound = 2,
     AlreadyInitialized = 3,
     NotInitialized = 4,
-}
+    /// Returned when `confirm_webhook` is called but no rotation is pending.
+    NoPendingWebhook = 5,    LabelTooLong = 6,
+    TooManyRules = 7,
+    InvalidRuleDescriptor = 8,
+    OwnerAlertLimitExceeded = 9,
+    DuplicateAlertId = 10,}
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
@@ -29,10 +36,29 @@ pub enum DataKey {
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
+/// Input payload for a single alert in a `batch_register_alerts` call.
+///
+/// All fields mirror the per-alert parameters of `register_alert`; the owner
+/// is taken from the `caller` argument of `batch_register_alerts` instead of
+/// being stored here.
+#[contracttype]
+#[derive(Clone)]
+pub struct AlertInput {
+    /// Contract address to watch.
+    pub target_contract: Address,
+    /// Human-readable label (max 128 bytes).
+    pub label: String,
+    /// SHA-256 hex digest of the webhook URL.
+    pub webhook_hash: String,
+    /// Rule identifiers that trigger the alert.
+    pub rules: Vec<String>,
+}
+
 /// On-chain configuration for a single alert.
 ///
-/// Stored under [`DataKey::Alert`] with a TTL of 100 ledgers (~8 minutes).
-/// See `docs/ttl.md` for expiry details and how to extend the TTL.
+/// Stored under [`DataKey::Alert`] with a default TTL of `DEFAULT_TTL` ledgers
+/// (~24 hours). Use `AlertRegistry::bump_alert` to extend up to `MAX_TTL`.
+/// See `docs/ttl.md` for expiry details.
 #[contracttype]
 #[derive(Clone)]
 pub struct AlertConfig {
@@ -52,4 +78,11 @@ pub struct AlertConfig {
     pub updated_at: u64,
     /// Whether the alert is currently active.
     pub active: bool,
+    /// Pending webhook hash proposed via `propose_webhook` but not yet confirmed.
+    ///
+    /// `None` means no rotation is in progress. Once the owner calls
+    /// `confirm_webhook`, this value is promoted to `webhook_hash` and cleared.
+    /// This two-step flow prevents a window where the old webhook is deactivated
+    /// before the new one is confirmed by the off-chain watcher.
+    pub pending_webhook_hash: Option<String>,
 }

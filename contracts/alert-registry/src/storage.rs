@@ -1,21 +1,26 @@
 use soroban_sdk::{symbol_short, vec, Address, Env, Vec};
 
-use crate::types::{AlertConfig, DataKey};
+use crate::types::{AlertConfig, ContractError, DataKey};
+use crate::{DEFAULT_TTL};
 
 // ── ID counter ────────────────────────────────────────────────────────────────
 
 /// Atomically read and increment the global alert ID counter.
 ///
 /// Returns the current value before incrementing, so the first ID is `0`.
+/// Stored in persistent storage so it survives instance TTL expiry.
 pub fn next_id(env: &Env) -> u64 {
     let id: u64 = env
         .storage()
-        .instance()
-        .get(&symbol_short!("NEXT_ID"))
+        .persistent()
+        .get(&DataKey::NextId)
         .unwrap_or(0u64);
     env.storage()
-        .instance()
-        .set(&symbol_short!("NEXT_ID"), &(id + 1));
+        .persistent()
+        .set(&DataKey::NextId, &(id + 1));
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::NextId, 100, 100);
     id
 }
 
@@ -29,7 +34,7 @@ pub fn set_alert(env: &Env, id: u64, config: &AlertConfig) {
     env.storage().persistent().set(&DataKey::Alert(id), config);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::Alert(id), 100, 100);
+        .extend_ttl(&DataKey::Alert(id), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 pub fn remove_alert(env: &Env, id: u64) {
@@ -38,6 +43,13 @@ pub fn remove_alert(env: &Env, id: u64) {
 
 pub fn has_alert(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Alert(id))
+}
+
+/// Extend the TTL of an alert entry without modifying its data.
+pub fn extend_alert_ttl(env: &Env, id: u64) {
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::Alert(id), 100, 100);
 }
 
 // ── Owner index ───────────────────────────────────────────────────────────────
@@ -53,11 +65,11 @@ pub fn owner_index(env: &Env, owner: &Address) -> Vec<u64> {
 /// Append `id` to the owner's index and persist it with a refreshed TTL.
 ///
 /// Panics if `id` is already present to enforce index uniqueness.
-pub fn push_owner_index(env: &Env, owner: &Address, id: u64) {
+pub fn push_owner_index(env: &Env, owner: &Address, id: u64) -> Result<(), ContractError> {
     let mut ids = owner_index(env, owner);
     for i in 0..ids.len() {
         if ids.get(i).unwrap() == id {
-            panic!("duplicate alert id in owner index");
+            return Err(ContractError::DuplicateAlertId);
         }
     }
     ids.push_back(id);
@@ -66,7 +78,8 @@ pub fn push_owner_index(env: &Env, owner: &Address, id: u64) {
         .set(&DataKey::OwnerIndex(owner.clone()), &ids);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
+    Ok(())
 }
 
 /// Remove `id` from the owner's index and persist the updated list.
@@ -84,7 +97,20 @@ pub fn remove_from_owner_index(env: &Env, owner: &Address, id: u64) {
         .set(&DataKey::OwnerIndex(owner.clone()), &updated);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+        .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
+}
+
+/// Extend the TTL of the owner index without modifying its data.
+pub fn extend_owner_index_ttl(env: &Env, owner: &Address) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::OwnerIndex(owner.clone()))
+    {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+    }
 }
 
 // ── Contract index ────────────────────────────────────────────────────────────
@@ -100,11 +126,11 @@ pub fn contract_index(env: &Env, target: &Address) -> Vec<u64> {
 /// Append `id` to the contract's index and persist it with a refreshed TTL.
 ///
 /// Panics if `id` is already present to enforce index uniqueness.
-pub fn push_contract_index(env: &Env, target: &Address, id: u64) {
+pub fn push_contract_index(env: &Env, target: &Address, id: u64) -> Result<(), ContractError> {
     let mut ids = contract_index(env, target);
     for i in 0..ids.len() {
         if ids.get(i).unwrap() == id {
-            panic!("duplicate alert id in contract index");
+            return Err(ContractError::DuplicateAlertId);
         }
     }
     ids.push_back(id);
@@ -113,7 +139,8 @@ pub fn push_contract_index(env: &Env, target: &Address, id: u64) {
         .set(&DataKey::ContractIndex(target.clone()), &ids);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
+    Ok(())
 }
 
 /// Remove `id` from the contract's index and persist the updated list.
@@ -131,7 +158,20 @@ pub fn remove_from_contract_index(env: &Env, target: &Address, id: u64) {
         .set(&DataKey::ContractIndex(target.clone()), &updated);
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+        .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
+}
+
+/// Extend the TTL of the contract index without modifying its data.
+pub fn extend_contract_index_ttl(env: &Env, target: &Address) {
+    if env
+        .storage()
+        .persistent()
+        .has(&DataKey::ContractIndex(target.clone()))
+    {
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+    }
 }
 
 // ── Batch reads ───────────────────────────────────────────────────────────────

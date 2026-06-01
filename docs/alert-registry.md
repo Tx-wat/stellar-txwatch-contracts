@@ -18,6 +18,7 @@ Contract that stores alert configurations on-chain, keyed by contract address.
 | `created_at` | `u64` | Ledger timestamp at creation |
 | `updated_at` | `u64` | Ledger timestamp of last update |
 | `active` | `bool` | Whether the alert is active |
+| `pending_webhook_hash` | `Option<String>` | Pending webhook hash proposed via `propose_webhook`, not yet confirmed. `None` when no rotation is in progress. |
 
 ---
 
@@ -355,6 +356,70 @@ Updates the webhook hash for an existing alert. Use this to rotate webhook URLs 
 
 ---
 
+### `propose_webhook`
+
+Step 1 of the two-step webhook rotation flow. Stores the new hash in `pending_webhook_hash` without replacing the live `webhook_hash`. The old webhook remains active until the owner calls `confirm_webhook`, eliminating the window where the old webhook is deactivated before the new one is confirmed.
+
+Calling `propose_webhook` again before confirming overwrites the previous pending hash, allowing the owner to correct a mistake.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | ID of the alert to update |
+| `new_webhook_hash` | `String` | SHA-256 hex digest of the new webhook URL |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+
+**Events:** Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+
+---
+
+### `confirm_webhook`
+
+Step 2 of the two-step webhook rotation flow. Promotes `pending_webhook_hash` to `webhook_hash` and clears the pending field. Returns `NoPendingWebhook` if no rotation is in progress.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | ID of the alert to confirm rotation for |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner; `NoPendingWebhook` if no pending hash exists.
+
+**Events:** Emits `(Symbol("alert"), Symbol("wh_conf"))` with data `(id: u64, caller: Address)`.
+
+---
+
+### `renew_alert_ttl`
+
+Extends the TTL of an alert and its index entries without modifying any data. This is the recommended way to keep an alert alive without changing `updated_at` (which would cause it to appear in incremental-sync results via `get_alerts_modified_since`).
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+**Parameters**
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | ID of the alert to renew |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+
+---
+
 ### `get_contract_alerts_paginated`
 
 Returns a page of alert configs registered for a given target contract.
@@ -438,7 +503,7 @@ Returns the configured `WatcherRegistry` contract address, or `None` if watcher-
 | `AlertNotFound` | 2 | No alert exists for the given ID |
 | `AlreadyInitialized` | 3 | `initialize` was called more than once |
 | `NotInitialized` | 4 | Admin function called before `initialize` |
-| `NotAWatcher` | 5 | Watcher-gating is enabled and the querier is not a registered watcher |
+| `NoPendingWebhook` | 5 | `confirm_webhook` called but no rotation is in progress |
 
 ---
 
