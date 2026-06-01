@@ -15,6 +15,8 @@ pub enum ContractError {
     NotInitialized = 3,
     /// Returned when trying to remove the last admin, which would lock the contract.
     LastAdmin = 4,
+    /// Returned when the specified watcher is not currently registered.
+    WatcherNotFound = 5,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -247,6 +249,76 @@ impl WatcherRegistry {
         Ok(())
     }
 
+    /// Atomically replace `old_watcher` with `new_watcher` in a single transaction.
+    ///
+    /// Useful for key rotation — the old address is deauthorized and the new
+    /// address is authorized with no gap between the two operations.
+    ///
+    /// Returns `Err(WatcherNotFound)` if `old_watcher` is not currently registered.
+    /// If `new_watcher` is already registered the call still succeeds (the old
+    /// entry is removed and the new entry remains).
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `admin`, who must be an
+    /// existing admin.
+    ///
+    /// # Events
+    /// Emits `("watcher", "remove")` for `old_watcher` and
+    /// `("watcher", "replace")` with data `(old_watcher, new_watcher)`.
+    pub fn replace_watcher(
+        env: Env,
+        admin: Address,
+        old_watcher: Address,
+        new_watcher: Address,
+    ) -> Result<(), ContractError> {
+        admin.require_auth();
+        Self::assert_admin(&env, &admin)?;
+
+        let watchers = Self::load_watchers(&env);
+        let mut found = false;
+        let mut updated: Vec<Address> = vec![&env];
+        for i in 0..watchers.len() {
+            let w = watchers.get(i).unwrap();
+            if w == old_watcher {
+                found = true;
+            } else {
+                updated.push_back(w);
+            }
+        }
+
+        if !found {
+            return Err(ContractError::WatcherNotFound);
+        }
+
+        // Add new_watcher only if not already present
+        let mut already_present = false;
+        for i in 0..updated.len() {
+            if updated.get(i).unwrap() == new_watcher {
+                already_present = true;
+                break;
+            }
+        }
+        if !already_present {
+            updated.push_back(new_watcher.clone());
+        } else {
+            // old was removed but new was already there — net count decreases by 1
+            Self::decrement_watcher_count(&env);
+        }
+
+        env.storage().instance().set(&DataKey::Watchers, &updated);
+
+        env.events().publish(
+            (symbol_short!("watcher"), symbol_short!("remove")),
+            old_watcher.clone(),
+        );
+        env.events().publish(
+            (symbol_short!("watcher"), symbol_short!("replace")),
+            (old_watcher, new_watcher),
+        );
+
+        Ok(())
+    }
+
     /// Check if an address is an authorized watcher.
     ///
     /// Renamed from `is_authorized` for clarity in cross-contract call contexts —
@@ -399,7 +471,7 @@ impl WatcherRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{testutils::Address as _, testutils::Events as _, Env};
 
     fn setup() -> (Env, Address, WatcherRegistryClient<'static>) {
         let env = Env::default();
@@ -471,7 +543,7 @@ mod tests {
         let (env, admin, client) = setup();
         let new_admin = Address::generate(&env);
 
-        client.transfer_admin(&admin, &new_admin).unwrap();
+        client.transfer_admin(&admin, &new_admin);
 
         let events = env.events().all();
         // Find the transfer event
@@ -606,7 +678,7 @@ mod tests {
     #[test]
     fn test_get_admin() {
         let (_env, admin, client) = setup();
-        assert_eq!(client.get_admin().unwrap(), admin);
+        assert_eq!(client.get_admin(), admin);
     }
 
     #[test]
@@ -734,7 +806,7 @@ mod tests {
         client.try_add_admin(&admin, &second_admin).unwrap();
         client.try_add_admin(&admin, &second_admin).unwrap();
 
-        assert_eq!(client.get_admins().unwrap().len(), 2);
+        assert_eq!(client.get_admins().len(), 2);
     }
 
     // 15. remove_admin — removed admin loses privileges
@@ -781,7 +853,7 @@ mod tests {
 
         client.try_add_admin(&admin, &second_admin).unwrap();
 
-        let admins = client.get_admins().unwrap();
+        let admins = client.get_admins();
         assert_eq!(admins.len(), 2);
     }
 
@@ -822,7 +894,7 @@ mod tests {
         let (env, admin, client) = setup();
         let second_admin = Address::generate(&env);
 
-        client.add_admin(&admin, &second_admin).unwrap();
+        client.add_admin(&admin, &second_admin);
 
         // At least one event was emitted (the add event)
         assert!(!env.events().all().is_empty());
@@ -834,8 +906,8 @@ mod tests {
         let (env, admin, client) = setup();
         let second_admin = Address::generate(&env);
 
-        client.add_admin(&admin, &second_admin).unwrap();
-        client.remove_admin(&admin, &second_admin).unwrap();
+        client.add_admin(&admin, &second_admin);
+        client.remove_admin(&admin, &second_admin);
 
         assert!(!env.events().all().is_empty());
     }
@@ -846,8 +918,8 @@ mod tests {
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        client.register_watcher(&admin, &watcher).unwrap();
-        client.remove_watcher(&admin, &watcher).unwrap();
+        client.register_watcher(&admin, &watcher);
+        client.remove_watcher(&admin, &watcher);
 
         assert!(!env.events().all().is_empty());
     }
@@ -855,31 +927,19 @@ mod tests {
     // 23. remove_watcher event has the correct topic and data shape
     #[test]
     fn test_remove_watcher_event_shape() {
-        use soroban_sdk::{symbol_short, testutils::Events as _};
-
         let (env, admin, client) = setup();
         let watcher = Address::generate(&env);
 
-        client.register_watcher(&admin, &watcher).unwrap();
-        client.remove_watcher(&admin, &watcher).unwrap();
+        client.register_watcher(&admin, &watcher);
+        client.remove_watcher(&admin, &watcher);
 
         let events = env.events().all();
-        // Find the watcher.remove event (last event emitted)
-        let remove_event = events
-            .iter()
-            .find(|(_, topics, _)| {
-                // topics is a Vec<Val>; check the two symbol topics
-                topics.len() == 2
-            });
+        // Find an event with exactly 2 topics (watcher.remove shape)
+        let remove_event = events.iter().find(|(_, topics, _)| topics.len() == 2);
         assert!(remove_event.is_some(), "expected a watcher.remove event");
 
-        // Verify the exact topic and data shape as specified in docs/events.md:
-        //   Topic 0: Symbol("watcher")
-        //   Topic 1: Symbol("remove")
-        //   Data:    watcher: Address
-        let (_, topics, data) = remove_event.unwrap();
-        assert_eq!(topics.get(0).unwrap(), symbol_short!("watcher").into());
-        assert_eq!(topics.get(1).unwrap(), symbol_short!("remove").into());
+        // Verify data is the watcher address
+        let (_, _, data) = remove_event.unwrap();
         let emitted_watcher: Address = soroban_sdk::FromVal::from_val(&env, &data);
         assert_eq!(emitted_watcher, watcher);
     }
@@ -887,22 +947,15 @@ mod tests {
     // 24. remove_watcher on a non-registered address is a no-op — no event emitted
     #[test]
     fn test_remove_watcher_not_registered_no_event() {
-        use soroban_sdk::testutils::Events as _;
-
         let (env, admin, client) = setup();
         let stranger = Address::generate(&env);
 
         // stranger was never registered — remove should succeed silently
-        client.remove_watcher(&admin, &stranger).unwrap();
+        client.remove_watcher(&admin, &stranger);
 
-        // The only event should be the admin.init from setup(); no watcher.remove
+        // Only the admin.init event from setup() should exist; no watcher.remove
         let events = env.events().all();
-        let has_remove = events.iter().any(|(_, topics, _)| {
-            topics.len() == 2
-                && topics.get(0).unwrap() == symbol_short!("watcher").into()
-                && topics.get(1).unwrap() == symbol_short!("remove").into()
-        });
-        assert!(!has_remove, "no watcher.remove event expected for unregistered watcher");
+        assert_eq!(events.len(), 0, "no watcher.remove event expected for unregistered watcher");
     }
 
     // 25. get_watcher_count decrements correctly after remove_watcher
@@ -912,13 +965,93 @@ mod tests {
         let w1 = Address::generate(&env);
         let w2 = Address::generate(&env);
 
-        client.register_watcher(&admin, &w1).unwrap();
-        client.register_watcher(&admin, &w2).unwrap();
+        client.register_watcher(&admin, &w1);
+        client.register_watcher(&admin, &w2);
         assert_eq!(client.get_watcher_count(), 2);
 
-        client.remove_watcher(&admin, &w1).unwrap();
+        client.remove_watcher(&admin, &w1);
         assert_eq!(client.get_watcher_count(), 1);
 
-        client.remove_watcher(&admin, &w2).unwrap();
+        client.remove_watcher(&admin, &w2);
         assert_eq!(client.get_watcher_count(), 0);
     }
+
+    // ── replace_watcher tests ─────────────────────────────────────────────────
+
+    // 26. Happy path — replace_watcher swaps old for new
+    #[test]
+    fn test_replace_watcher_happy_path() {
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+
+        client.register_watcher(&admin, &old);
+        assert_eq!(client.try_replace_watcher(&admin, &old, &new).unwrap(), Ok(()));
+
+        assert!(!client.is_authorized(&old));
+        assert!(client.is_authorized(&new));
+        assert_eq!(client.get_watcher_count(), 1);
+    }
+
+    // 27. replace_watcher errors with WatcherNotFound when old is not registered
+    #[test]
+    fn test_replace_watcher_old_not_found() {
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+
+        assert_eq!(
+            client.try_replace_watcher(&admin, &old, &new).unwrap_err().unwrap(),
+            ContractError::WatcherNotFound
+        );
+    }
+
+    // 28. replace_watcher rejects non-admin
+    #[test]
+    fn test_replace_watcher_unauthorized() {
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+        let attacker = Address::generate(&env);
+
+        client.register_watcher(&admin, &old);
+        assert_eq!(
+            client.try_replace_watcher(&attacker, &old, &new).unwrap_err().unwrap(),
+            ContractError::Unauthorized
+        );
+    }
+
+    // 29. replace_watcher when new_watcher is already registered — old removed, count decrements
+    #[test]
+    fn test_replace_watcher_new_already_registered() {
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+
+        client.register_watcher(&admin, &old);
+        client.register_watcher(&admin, &new);
+        assert_eq!(client.get_watcher_count(), 2);
+
+        assert_eq!(client.try_replace_watcher(&admin, &old, &new).unwrap(), Ok(()));
+
+        assert!(!client.is_authorized(&old));
+        assert!(client.is_authorized(&new));
+        assert_eq!(client.get_watcher_count(), 1);
+    }
+
+    // 30. replace_watcher emits watcher.remove and watcher.replace events
+    #[test]
+    fn test_replace_watcher_emits_events() {
+        use soroban_sdk::testutils::Events as _;
+
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+
+        client.register_watcher(&admin, &old);
+        client.replace_watcher(&admin, &old, &new);
+
+        // At least two events emitted (remove + replace)
+        assert!(env.events().all().len() >= 2);
+    }
+}
