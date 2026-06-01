@@ -364,8 +364,8 @@ impl AlertRegistry {
     #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
-            .instance()
-            .get(&symbol_short!("NEXT_ID"))
+            .persistent()
+            .get(&DataKey::NextId)
             .unwrap_or(0u64)
     }
 
