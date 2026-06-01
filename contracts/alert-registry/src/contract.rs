@@ -1,7 +1,7 @@
 use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Vec};
 
 use crate::storage;
-use crate::types::{AlertConfig, ContractError};
+use crate::types::{AlertConfig, ContractError, DataKey};
 
 #[contract]
 pub struct AlertRegistry;
@@ -296,8 +296,8 @@ impl AlertRegistry {
     #[must_use]
     pub fn get_alert_count(env: Env) -> u64 {
         env.storage()
-            .instance()
-            .get(&symbol_short!("NEXT_ID"))
+            .persistent()
+            .get(&DataKey::NextId)
             .unwrap_or(0u64)
     }
 

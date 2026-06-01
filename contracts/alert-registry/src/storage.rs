@@ -7,15 +7,19 @@ use crate::types::{AlertConfig, DataKey};
 /// Atomically read and increment the global alert ID counter.
 ///
 /// Returns the current value before incrementing, so the first ID is `0`.
+/// Stored in persistent storage so it survives instance TTL expiry.
 pub fn next_id(env: &Env) -> u64 {
     let id: u64 = env
         .storage()
-        .instance()
-        .get(&symbol_short!("NEXT_ID"))
+        .persistent()
+        .get(&DataKey::NextId)
         .unwrap_or(0u64);
     env.storage()
-        .instance()
-        .set(&symbol_short!("NEXT_ID"), &(id + 1));
+        .persistent()
+        .set(&DataKey::NextId, &(id + 1));
+    env.storage()
+        .persistent()
+        .extend_ttl(&DataKey::NextId, 100, 100);
     id
 }
 
