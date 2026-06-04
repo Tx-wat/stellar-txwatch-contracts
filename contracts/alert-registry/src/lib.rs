@@ -6,6 +6,12 @@ use soroban_sdk::{
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum _InvalidWebhookHashContractError {
+    InvalidWebhookHash = 1,
+}
+
 // ── Storage keys ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -56,10 +62,12 @@ pub enum ContractError {
     /// Returned when a watcher registry is configured and the querying address
     /// is not a registered watcher.
     NotAWatcher = 5,
-    /// Returned when `webhook_hash` is not exactly 64 hex characters.
     InvalidWebhookHash = 6,
-    /// Returned when `confirm_webhook` is called but no rotation is pending.
-    NoPendingWebhook = 7,
+    LabelTooLong = 7,
+    TooManyRules = 8,
+    InvalidRuleDescriptor = 9,
+    OwnerAlertLimitExceeded = 10,
+    DuplicateAlertId = 11,
 }
 
 // ── Data types ───────────────────────────────────────────────────────────────
@@ -243,11 +251,11 @@ impl AlertRegistry {
         owner.require_auth();
 
         if label.len() > 128 {
-            panic!("label exceeds 128 bytes");
+            return Err(ContractError::LabelTooLong);
         }
 
-        Self::validate_rules(&env, &rules);
-        Self::assert_per_owner_limit(&env, &owner);
+        Self::validate_rules(&env, &rules)?;
+        Self::assert_per_owner_limit(&env, &owner)?;
 
         let id = Self::next_id(&env);
         let now = env.ledger().timestamp();
@@ -271,8 +279,8 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::AlertActive(id), DEFAULT_TTL, DEFAULT_TTL);
-        Self::push_owner_index(&env, &owner, id);
-        Self::push_contract_index(&env, &target_contract, id);
+        Self::push_owner_index(&env, &owner, id)?;
+        Self::push_contract_index(&env, &target_contract, id)?;
 
         env.events().publish(
             (symbol_short!("alert"), symbol_short!("register")),
@@ -394,7 +402,7 @@ impl AlertRegistry {
         caller.require_auth();
 
         if label.len() > 128 {
-            panic!("label exceeds 128 bytes");
+            return Err(ContractError::LabelTooLong);
         }
 
         let mut config: AlertConfig = env
@@ -692,7 +700,7 @@ impl AlertRegistry {
 
         // Migrate the contract index
         Self::remove_from_contract_index(&env, &old_target, config_id);
-        Self::push_contract_index(&env, &new_target, config_id);
+        Self::push_contract_index(&env, &new_target, config_id)?;
 
         Ok(())
     }
@@ -816,28 +824,31 @@ impl AlertRegistry {
         }
     }
 
-    fn assert_per_owner_limit(env: &Env, owner: &Address) {
+    fn assert_per_owner_limit(env: &Env, owner: &Address) -> Result<(), ContractError> {
         let limit = Self::get_per_owner_alert_limit(env.clone());
         if limit > 0 && Self::get_active_alert_count(env.clone(), owner.clone()) >= limit {
-            panic!("owner alert limit exceeded");
+            return Err(ContractError::OwnerAlertLimitExceeded);
         }
+        Ok(())
     }
 
-    fn validate_rules(env: &Env, rules: &Vec<String>) {
+    fn validate_rules(env: &Env, rules: &Vec<String>) -> Result<(), ContractError> {
         if rules.len() > 50 {
-            panic!("too many rules: maximum is 50");
+            return Err(ContractError::TooManyRules);
         }
         for i in 0..rules.len() {
-            Self::validate_rule(env, &rules.get(i).unwrap());
+            Self::validate_rule(env, &rules.get(i).unwrap())?;
         }
+        Ok(())
     }
 
-    fn validate_rule(env: &Env, rule: &String) {
+    fn validate_rule(env: &Env, rule: &String) -> Result<(), ContractError> {
         let transfer = String::from_str(env, "rule:transfer");
         let mint = String::from_str(env, "rule:mint");
         if *rule != transfer && *rule != mint {
-            panic!("invalid rule descriptor");
+            return Err(ContractError::InvalidRuleDescriptor);
         }
+        Ok(())
     }
 
     fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: &Address) {
@@ -889,11 +900,11 @@ impl AlertRegistry {
     }
 
     /// Append `id` to the owner's index and persist it with a refreshed TTL.
-    fn push_owner_index(env: &Env, owner: &Address, id: u64) {
+    fn push_owner_index(env: &Env, owner: &Address, id: u64) -> Result<(), ContractError> {
         let mut ids = Self::owner_index(env, owner);
         for i in 0..ids.len() {
             if ids.get(i).unwrap() == id {
-                panic!("duplicate alert id in owner index");
+                return Err(ContractError::DuplicateAlertId);
             }
         }
         ids.push_back(id);
@@ -903,14 +914,15 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
+        Ok(())
     }
 
     /// Append `id` to the contract's index and persist it with a refreshed TTL.
-    fn push_contract_index(env: &Env, target: &Address, id: u64) {
+    fn push_contract_index(env: &Env, target: &Address, id: u64) -> Result<(), ContractError> {
         let mut ids = Self::contract_index(env, target);
         for i in 0..ids.len() {
             if ids.get(i).unwrap() == id {
-                panic!("duplicate alert id in contract index");
+                return Err(ContractError::DuplicateAlertId);
             }
         }
         ids.push_back(id);
@@ -920,6 +932,7 @@ impl AlertRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
+        Ok(())
     }
 
     /// Remove `id` from the owner's index and persist the updated list.
