@@ -248,3 +248,55 @@ get_all_watchers_paginated(env, offset: u32, limit: u32) -> Vec<Address>
 ```
 
 Read-only, no auth. `limit` is capped at `MAX_PAGE_LIMIT` (50). Returns an empty vec when `offset` is past the end.
+
+---
+
+## Additional functions added after v0.1.0
+
+### `batch_register_watchers`
+
+`batch_register_watchers(admin, watchers: Vec<Address>) -> Result<u32, ContractError>` registers up to the
+batch limit of watchers in one call and returns how many were added. Already-registered addresses are skipped.
+
+**Requires auth:** `admin`
+
+**Errors:** `Unauthorized` (non-admin), `ContractPaused`, `BatchTooLarge`, `WatcherLimitExceeded`.
+
+**Events:** one `("watcher", "register")` per newly added watcher.
+
+---
+
+### `renew_watcher`
+
+`renew_watcher(admin, watcher, new_expiry: Option<u64>)` updates the expiry of an existing watcher.
+Passing `None` clears the expiry.
+
+**Requires auth:** `admin`
+
+**Errors:** `Unauthorized` (non-admin), `ContractPaused`, `WatcherNotFound`.
+
+**Events:** `("watcher", "renew")`.
+
+---
+
+### `set_paused` / `is_paused`
+
+`set_paused(admin, paused: bool)` pauses or unpauses the registry. While paused, every mutating function
+returns `ContractPaused`. `is_paused()` is read-only and needs no auth.
+
+**Requires auth:** `admin` (for `set_paused`)
+
+**Events:** `("admin", "pause")` or `("admin", "unpause")` with the admin address.
+
+---
+
+### `is_initialized`
+
+`is_initialized() -> bool` is read-only and needs no auth. It returns `true` once `initialize` has run.
+
+---
+
+### `transfer_admin` — multi-admin restriction
+
+When more than one admin exists, `transfer_admin` fails with `MultipleAdminsExist`. Use `remove_admin`
+to reduce the set to one admin first, or manage the set with `add_admin` / `remove_admin`.

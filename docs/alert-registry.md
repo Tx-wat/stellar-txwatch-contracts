@@ -611,3 +611,41 @@ Admin-only. Sets `active = false` / `true` on an alert without owner auth. Owner
 **Errors:** `Unauthorized` (non-admin), `AlertNotFound`.
 
 **Events:** `("alert", "update")` with `(id, admin, active)`.
+
+---
+
+### `update_target_contract`
+
+Moves an alert to a different target contract. The contract index is migrated from the old target to the new one, and `updated_at` is refreshed.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | Alert to update |
+| `new_target` | `Address` | New target contract |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `ContractPaused` while the contract is paused; `AlertNotFound` if the ID does not exist; `Unauthorized` if caller is not the owner.
+
+**Events:** none emitted by this function.
+
+---
+
+### `deactivate_all_alerts`
+
+Sets `active = false` on every alert owned by `caller` and returns how many were deactivated. Used as an emergency stop for one owner's alerts.
+
+**Requires auth:** `caller`
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Owner whose alerts are deactivated |
+
+**Returns:** `u32` — the number of alerts that were deactivated.
+
+**Errors:** the function panics (instead of returning an error) if the contract is paused.
+
+**Events:** none emitted by this function.
