@@ -235,6 +235,7 @@ impl AlertRegistry {
 
     /// Initialize the optional admin role for the registry. Can only be called once.
     pub fn initialize(env: Env, admin: Address) -> Result<(), ContractError> {
+        admin.require_auth();
         if env.storage().instance().has(&symbol_short!("ADMIN")) {
             return Err(ContractError::AlreadyInitialized);
         }
@@ -1069,6 +1070,8 @@ impl AlertRegistry {
     /// Emits `(Symbol("alert"), Symbol("bump"))` with data `(id: u64, ttl: u32)`
     /// for each renewed alert.
     pub fn bulk_renew_ttl(env: Env, config_ids: Vec<u64>) -> Result<u32, ContractError> {
+        // Keeper TTL extension is a mutation: block it while paused, like bump_alert (#449).
+        Self::assert_not_paused(&env)?;
         if config_ids.len() > MAX_BATCH_SIZE {
             return Err(ContractError::TooManyRules);
         }

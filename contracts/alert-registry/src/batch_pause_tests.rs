@@ -130,3 +130,51 @@ fn test_get_active_alerts_paginated() {
     assert_eq!(client.get_active_alerts_paginated(&target, &1, &10).len(), 1);
 }
 
+
+#[test]
+fn bulk_renew_ttl_rejected_while_paused() {
+    // #449: keepers must not extend TTLs while the operator has paused the contract.
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+    client.initialize(&admin);
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "alert"),
+        &hash64(&env),
+        &vec![&env, str(&env, "rule:transfer")],
+        &None,
+    );
+    client.set_paused(&admin, &true);
+
+    assert_eq!(
+        client
+            .try_bulk_renew_ttl(&vec![&env, id])
+            .unwrap_err()
+            .unwrap(),
+        ContractError::ContractPaused
+    );
+}
+
+#[test]
+fn bulk_renew_ttl_works_after_unpause() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+    client.initialize(&admin);
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &str(&env, "alert"),
+        &hash64(&env),
+        &vec![&env, str(&env, "rule:transfer")],
+        &None,
+    );
+    client.set_paused(&admin, &true);
+    client.set_paused(&admin, &false);
+
+    assert_eq!(client.bulk_renew_ttl(&vec![&env, id]), 1);
+}

@@ -111,3 +111,20 @@ fn confirm_webhook_emits_alert_webhook() {
     // Confirm the old non-standard event is NOT emitted.
     assert!(!emitted(&env, "alert", "wh_conf"), "#204: wh_conf must NOT be emitted by confirm_webhook");
 }
+
+#[test]
+fn transfer_ownership_emits_alert_transfer() {
+    // #450: ownership changes must be visible to off-chain indexers.
+    let (env, client, owner, target) = setup();
+    let new_owner = Address::generate(&env);
+    let id = client.register_alert(
+        &owner,
+        &target,
+        &String::from_str(&env, "alert"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        &vec![&env, String::from_str(&env, "rule:transfer")],
+        &None,
+    );
+    client.transfer_alert_ownership(&owner, &id, &new_owner);
+    assert!(emitted(&env, "alert", "transfer"));
+}

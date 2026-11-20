@@ -1,7 +1,7 @@
 ﻿use soroban_sdk::{symbol_short, vec, Address, Env, Vec};
 
 use crate::types::{AlertConfig, ContractError, DataKey};
-use crate::{DEFAULT_TTL, RATE_LIMIT_COUNT, RATE_LIMIT_WINDOW};
+use crate::DEFAULT_TTL;
 
 // ── ID counter ────────────────────────────────────────────────────────────────
 
@@ -289,44 +289,3 @@ pub fn is_paused(env: &Env) -> bool {
 pub fn set_paused(env: &Env, paused: bool) {
     env.storage().instance().set(&symbol_short!("PAUSED"), &paused);
 }
-
-// ── Rate limiting ─────────────────────────────────────────────────────────────
-
-/// Enforce the per-owner registration rate limit.
-///
-/// Tracks the current window's start ledger and the number of registrations
-/// made within it. Once `RATE_LIMIT_COUNT` registrations have occurred inside
-/// a `RATE_LIMIT_WINDOW`-ledger window, further registrations are rejected
-/// with [`ContractError::RateLimitExceeded`] until the window rolls over.
-pub fn check_rate_limit(env: &Env, owner: &Address) -> Result<(), ContractError> {
-    if is_paused(env) {
-        return Err(ContractError::ContractPaused);
-    }
-
-    let now = env.ledger().sequence();
-    let key = DataKey::RateLimit(owner.clone());
-    let (window_start, count): (u32, u32) = env
-        .storage()
-        .persistent()
-        .get(&key)
-        .unwrap_or((now, 0u32));
-
-    if now.saturating_sub(window_start) >= RATE_LIMIT_WINDOW {
-        env.storage().persistent().set(&key, &(now, 1u32));
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, DEFAULT_TTL, DEFAULT_TTL);
-        return Ok(());
-    }
-
-    if count >= RATE_LIMIT_COUNT {
-        return Err(ContractError::RateLimitExceeded);
-    }
-
-    env.storage().persistent().set(&key, &(window_start, count + 1));
-    env.storage()
-        .persistent()
-        .extend_ttl(&key, DEFAULT_TTL, DEFAULT_TTL);
-    Ok(())
-}
-

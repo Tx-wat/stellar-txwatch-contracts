@@ -4,14 +4,6 @@ use soroban_sdk::{contracttype, contracterror, Address, String, Vec};
 /// `batch_register_alerts` and `bulk_renew_ttl`.
 pub const MAX_BATCH_SIZE: u32 = 20;
 
-/// Maximum number of alert registrations allowed per owner within a single
-/// rate-limit window. See [`RATE_LIMIT_WINDOW`].
-pub const RATE_LIMIT_COUNT: u32 = 10;
-
-/// Length of the rate-limit window, measured in ledgers (~8 minutes at
-/// ~5s per ledger). An owner may register at most [`RATE_LIMIT_COUNT`] alerts
-/// per window.
-pub const RATE_LIMIT_WINDOW: u32 = 100;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
