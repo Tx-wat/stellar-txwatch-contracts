@@ -47,6 +47,15 @@ mod pagination_boundary_tests;
 #[cfg(test)]
 mod rule_edge_tests;
 
+#[cfg(test)]
+mod rule_search_tests;
+
+#[cfg(test)]
+mod validate_input_tests;
+
+#[cfg(test)]
+mod activate_all_tests;
+
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
 /// Default TTL applied to persistent storage entries on every write.
@@ -513,6 +522,39 @@ impl AlertRegistry {
         );
 
         Ok(id)
+    }
+
+    /// Dry-run the validation performed by [`AlertRegistry::register_alert`] (#417).
+    ///
+    /// Clients can call this before submitting a transaction to check label
+    /// length, webhook hash format, rule descriptors, tags and the per-owner
+    /// limit. It returns the first validation error encountered.
+    ///
+    /// Unlike `register_alert`, this does not require auth and never writes to
+    /// storage. In particular it does not prune the owner index the way the
+    /// real registration path does.
+    ///
+    /// `target_contract` is accepted so the signature mirrors `register_alert`;
+    /// it is not validated here.
+    pub fn validate_alert_input(
+        env: Env,
+        owner: Address,
+        target_contract: Address,
+        label: String,
+        webhook_hash: String,
+        rules: Vec<String>,
+        tags: Option<Vec<String>>,
+    ) -> Result<(), ContractError> {
+        let _ = target_contract;
+        Self::assert_not_paused(&env)?;
+        if webhook_hash.len() != 64 {
+            return Err(ContractError::InvalidWebhookHash);
+        }
+        Self::validate_label(&label)?;
+        Self::validate_rules(&env, &rules)?;
+        Self::validate_tags(&tags)?;
+        Self::assert_per_owner_limit_readonly(&env, &owner, 1)?;
+        Ok(())
     }
 
     /// Register many alerts for `caller` in one transaction.
@@ -1168,6 +1210,35 @@ impl AlertRegistry {
         out
     }
 
+    /// Return the active alerts whose rule list contains `rule` (#416).
+    ///
+    /// v1 uses a linear scan over every allocated alert ID. Results are capped
+    /// at [`MAX_BATCH_SIZE`]; once the cap is reached the scan stops early.
+    /// Inactive and removed alerts are skipped. Read-only, no auth.
+    #[must_use]
+    pub fn get_alerts_by_rule(env: Env, rule: String) -> Vec<AlertConfig> {
+        let next: u64 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("NEXT_ID"))
+            .unwrap_or(0u64);
+        let mut out: Vec<AlertConfig> = Vec::new(&env);
+        let mut id: u64 = 0;
+        while id < next && out.len() < MAX_BATCH_SIZE {
+            if let Some(cfg) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, AlertConfig>(&DataKey::Alert(id))
+            {
+                if cfg.active && cfg.rules.contains(&rule) {
+                    out.push_back(cfg);
+                }
+            }
+            id += 1;
+        }
+        out
+    }
+
     /// Retrieve all alert configs owned by a given address.
     ///
     /// If a `WatcherRegistry` is configured, `querier` must be a registered
@@ -1270,6 +1341,48 @@ impl AlertRegistry {
                     env.storage()
                         .persistent()
                         .set(&DataKey::AlertActive(id), &false);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&DataKey::AlertActive(id), DEFAULT_TTL, DEFAULT_TTL);
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
+    /// Re-activate every inactive alert owned by `caller` in one call (#418).
+    ///
+    /// Mirror of [`AlertRegistry::deactivate_all_alerts`]. Already-active alerts
+    /// are skipped. Each alert that changes has its `AlertActive` flag synced.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`.
+    ///
+    /// # Returns
+    /// The number of alerts that were activated.
+    pub fn activate_all_alerts(env: Env, caller: Address) -> u32 {
+        Self::assert_not_paused(&env).unwrap_or_else(|e| panic_with_error!(&env, e));
+        caller.require_auth();
+        let ids = Self::owner_index(&env, &caller);
+        let mut count: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(mut cfg) = env
+                .storage()
+                .persistent()
+                .get::<DataKey, AlertConfig>(&DataKey::Alert(id))
+            {
+                if !cfg.active {
+                    cfg.active = true;
+                    cfg.updated_at = env.ledger().timestamp();
+                    env.storage().persistent().set(&DataKey::Alert(id), &cfg);
+                    env.storage()
+                        .persistent()
+                        .extend_ttl(&DataKey::Alert(id), DEFAULT_TTL, DEFAULT_TTL);
+                    env.storage()
+                        .persistent()
+                        .set(&DataKey::AlertActive(id), &true);
                     env.storage()
                         .persistent()
                         .extend_ttl(&DataKey::AlertActive(id), DEFAULT_TTL, DEFAULT_TTL);
@@ -1607,6 +1720,32 @@ impl AlertRegistry {
     /// [`ContractError::OwnerAlertLimitExceeded`].
     fn assert_per_owner_limit(env: &Env, owner: &Address) -> Result<(), ContractError> {
         Self::assert_per_owner_limit_for(env, owner, 1)
+    }
+
+    /// Read-only variant of [`assert_per_owner_limit_for`] (#417).
+    ///
+    /// Counts the owner's live alerts without pruning the owner index, so it is
+    /// safe to call from dry-run validation.
+    fn assert_per_owner_limit_readonly(
+        env: &Env,
+        owner: &Address,
+        additional: u32,
+    ) -> Result<(), ContractError> {
+        let limit = Self::get_per_owner_alert_limit(env.clone());
+        if limit > 0 {
+            let ids = Self::owner_index(env, owner);
+            let mut live: u32 = 0;
+            for i in 0..ids.len() {
+                let id = ids.get(i).unwrap();
+                if env.storage().persistent().has(&DataKey::Alert(id)) {
+                    live = live.saturating_add(1);
+                }
+            }
+            if live.saturating_add(additional) > limit {
+                return Err(ContractError::OwnerAlertLimitExceeded);
+            }
+        }
+        Ok(())
     }
 
     /// Like [`assert_per_owner_limit`], but checks that `additional` new alerts
