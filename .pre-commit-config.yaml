@@ -1,0 +1,20 @@
+# Local pre-commit hooks that mirror the CI formatting and lint checks.
+# Install once with:  pip install pre-commit && pre-commit install
+# Run on demand with: pre-commit run --all-files
+
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt --check
+        entry: cargo fmt --all -- --check
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy (warnings as errors)
+        entry: cargo clippy --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false

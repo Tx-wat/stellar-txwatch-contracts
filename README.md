@@ -18,7 +18,7 @@ CI enforces a hard size budget of **200 KB (204800 bytes)** per contract WASM bi
 (see [.github/workflows/wasm-size-check.yml](.github/workflows/wasm-size-check.yml)).
 The build fails if any binary exceeds this threshold.
 
-Current WASM sizes (reference — update after significant changes):
+Current WASM sizes (reference). A change counts as **significant** when a contract binary grows or shrinks by more than **5 KB**; the PR author who causes that change updates this table in the same PR (the PR template includes a checklist item for it).
 
 | Contract | WASM binary | Budget |
 |---|---|---|

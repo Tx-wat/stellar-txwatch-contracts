@@ -19,6 +19,17 @@ cargo install --locked stellar-cli --features opt
 
 Run `cargo fmt` before pushing. CI enforces formatting with `cargo fmt --all -- --check`, so unformatted code will fail the build. Formatting settings live in `rustfmt.toml`.
 
+### Pre-commit hooks (recommended)
+
+The repo ships a [`.pre-commit-config.yaml`](.pre-commit-config.yaml) that runs the same `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` checks CI uses, so problems surface before you commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Run the hooks against the whole tree at any time with `pre-commit run --all-files`.
+
 ## Build
 
 ```bash
