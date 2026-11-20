@@ -15,6 +15,24 @@ updates:
           - "soroban-sdk-*"
           - "soroban-*"
 
+  - package-ecosystem: "npm"
+    directory: "/bindings/alert-registry"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  - package-ecosystem: "npm"
+    directory: "/bindings/watcher-registry"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

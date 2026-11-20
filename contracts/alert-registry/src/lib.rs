@@ -47,6 +47,9 @@ mod pagination_boundary_tests;
 #[cfg(test)]
 mod rule_edge_tests;
 
+#[cfg(test)]
+mod bump_next_id_tests;
+
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
 /// Default TTL applied to persistent storage entries on every write.
