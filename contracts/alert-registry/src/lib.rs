@@ -47,6 +47,18 @@ mod pagination_boundary_tests;
 #[cfg(test)]
 mod rule_edge_tests;
 
+#[cfg(test)]
+mod get_rules_registry_tests;
+
+#[cfg(test)]
+mod batch_tags_tests;
+
+#[cfg(test)]
+mod datakey_unify_tests;
+
+#[cfg(test)]
+mod validation_module_tests;
+
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
 /// Default TTL applied to persistent storage entries on every write.
