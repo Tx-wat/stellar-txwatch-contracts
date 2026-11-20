@@ -286,7 +286,7 @@ Returns all alert configs registered for a given target contract, including both
 
 Returns only the active alert configs (`active == true`) registered for a given target contract. Inactive alerts are excluded.
 
-If a `WatcherRegistry` is configured (via `set_watcher_registry`), `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+This function is not gated by the `WatcherRegistry`, even when one is configured. See [Watcher Gating](./watcher-registry.md#watcher-gating) for the gated list.
 
 **Parameters**
 
@@ -492,6 +492,8 @@ Returns the total number of alerts ever registered.
 ### `set_watcher_registry`
 
 Configures the `WatcherRegistry` contract address used for optional watcher-gating on read queries. Once set, `get_alerts_for_contract`, `get_alerts_by_owner`, and their paginated variants will cross-call `WatcherRegistry::is_watcher_authorized` before returning data. Admin only.
+
+Setup steps, the gated and ungated function table, and the current limits on disabling gating are in [Watcher Gating](./watcher-registry.md#watcher-gating). Do not pass the zero address to disable gating: the code does not treat it as "off".
 
 **Requires auth:** `admin`
 

@@ -248,3 +248,56 @@ get_all_watchers_paginated(env, offset: u32, limit: u32) -> Vec<Address>
 ```
 
 Read-only, no auth. `limit` is capped at `MAX_PAGE_LIMIT` (50). Returns an empty vec when `offset` is past the end.
+
+---
+
+## Watcher Gating
+
+Watcher gating is an optional check on the alert registry's read queries. When it is on,
+a caller must be an authorized watcher in this registry before the alert registry returns
+data. It is off by default. The alert-registry side is documented in
+[`alert-registry.md`](./alert-registry.md#set_watcher_registry).
+
+### Enable gating
+
+1. Deploy `WatcherRegistry` and call `initialize(admin)`.
+2. Register each trusted watcher node with `register_watcher(admin, watcher)`.
+3. Deploy `AlertRegistry` and call `initialize(admin)` on it.
+4. As the alert-registry admin, call `set_watcher_registry(admin, <WATCHER_REGISTRY_ID>)`
+   on the alert registry.
+5. Confirm with `get_watcher_registry()` on the alert registry. It should return the
+   watcher-registry address.
+6. Test with a registered watcher and an unregistered address. The first call should
+   succeed and the second should fail with `ContractError::NotAWatcher`.
+
+Each gated read makes a cross-contract call to `is_watcher_authorized`, so a watcher whose
+registration has expired (see `renew_watcher`) is rejected the same way as an unregistered one.
+
+### Gated vs ungated functions (alert registry)
+
+| Function | Gated | Notes |
+|---|---|---|
+| `get_alerts_for_contract` | Yes | `querier` must be a registered watcher |
+| `get_contract_alerts_paginated` | Yes | `querier` must be a registered watcher |
+| `get_alerts_by_owner` | Yes | `querier` must be a registered watcher |
+| `get_alerts_by_owner_paginated` | Yes | `querier` must be a registered watcher |
+| `get_alert` | No | Single alert by ID |
+| `get_alert_active` | No | Active flag by ID |
+| `get_alert_ids_for_contract` | No | Returns IDs only |
+| `get_alert_ids_by_owner` | No | Returns IDs only |
+| `get_active_alerts_for_contract` | No | Not gated in the current code |
+| `get_active_alerts_paginated` | No | Not gated in the current code |
+| `get_alerts_modified_since` / `get_alerts_updated_since` | No | |
+| `get_alert_count` / `get_active_alert_count` | No | Counts only |
+
+Only the four functions marked **Yes** check the watcher registry.
+
+### Disabling gating
+
+The alert registry's `set_watcher_registry` doc comment says that passing the zero address
+disables gating. The current code does not implement this: it stores whatever address it is
+given and does not special-case the zero address. Calling a gated function after that would
+make a cross-contract call to an address that is not a watcher registry, and the call would fail.
+
+Until that is fixed, there is no supported way to turn gating off once it is on. Do not rely on the
+zero-address approach. Each call can only replace the configured address with another one. It cannot clear it.

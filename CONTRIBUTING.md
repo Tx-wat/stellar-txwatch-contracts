@@ -95,8 +95,11 @@ for the detailed guide.
 
 1. **Propose** — open an issue describing the descriptor name, its semantics,
    and the use case it enables. Get agreement before writing code.
-2. **Contract change** — add the descriptor to the `validate_rules` allow-list
-   in the relevant contract so it is accepted by validation.
+2. **Contract change** — in `contracts/alert-registry/src/lib.rs`, add the descriptor
+   to the allow-list in `validate_rule` (not `validate_rules`, which only loops over
+   the entries and checks length and duplicates). There is no `get_supported_rules`.
+   The full walkthrough, including the positive, near-miss, and duplicate tests, is in
+   [docs/contributing-contracts.md](docs/contributing-contracts.md#adding-a-new-rule-descriptor).
 3. **Watcher change** — implement the matching logic for the descriptor in
    [`stellar-txwatch-core`](https://github.com/Tx-wat/stellar-txwatch-core).
 4. **Docs** — update the rule descriptor table in `docs/alert-registry.md`.

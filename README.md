@@ -22,8 +22,10 @@ Current WASM sizes (reference — update after significant changes):
 
 | Contract | WASM binary | Budget |
 |---|---|---|
-| Alert Registry | `alert_registry.wasm` | 200 KB |
-| Watcher Registry | `watcher_registry.wasm` | 200 KB |
+| Alert Registry | `alert_registry.wasm` — 69,464 bytes (67.8 KB) | 200 KB |
+| Watcher Registry | `watcher_registry.wasm` — not measured: the crate does not compile on `main` (see note) | 200 KB |
+
+> **Note:** Sizes were measured with `cargo build --release --target wasm32-unknown-unknown -p alert-registry` on Rust 1.88.0. The watcher-registry build currently fails in `contracts/watcher-registry/src/lib.rs` (`register_watcher` references `label`, `watchers`, and `String` without defining them). Update this table once that builds.
 
 To check sizes locally after building:
 
