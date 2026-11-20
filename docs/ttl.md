@@ -19,7 +19,16 @@ This applies to:
 -  `DataKey::OwnerIndex(address)` — per-owner alert ID lists
 -  `DataKey::ContractIndex(address)` — per-contract alert ID lists
 
-The `watcher-registry` uses **instance storage**, which has its own TTL managed by the network and is not explicitly extended in the current implementation.
+## Why `watcher-registry` uses a longer TTL (30 days)
+
+`watcher-registry` uses a different default TTL of **518 400 ledgers (~30 days)**. It is applied to its **instance storage** on each extension (`bump_instance_ttl` / `extend_instance_ttl` in `contracts/watcher-registry/src/`), not to per-entry persistent storage.
+
+The difference is intentional:
+
+- **Watcher set changes are rare.** Watchers are added or removed by the admin only, so the registry can go weeks without a write. A 30-day TTL keeps it from being archived in those quiet periods.
+- **Alert data changes often.** Alerts are created, updated and bumped continuously, and each entry is kept alive on its own. A 7-day TTL is enough because active alerts are refreshed by normal use, and it limits how long unused entries hold state.
+
+Changing either value is a deliberate decision. Update the constant, this section, and the comments in both contracts together.
 
 ## Configurable TTL via `bump_alert`
 

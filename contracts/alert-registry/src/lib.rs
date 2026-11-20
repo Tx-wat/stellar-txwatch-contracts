@@ -52,7 +52,9 @@ mod rule_edge_tests;
 /// Default TTL applied to persistent storage entries on every write.
 ///
 /// Approximately 7 days at the nominal 5-second ledger close time (#249).
-/// See `docs/ttl.md` for the full rationale.
+/// This is intentionally shorter than the `watcher-registry` default (518 400
+/// ledgers, ~30 days): alert data is written often and kept alive per entry,
+/// while the watcher set changes rarely. See `docs/ttl.md`.
 pub const DEFAULT_TTL: u32 = 120_960;
 
 /// Protocol-enforced upper bound on caller-specified TTL values.
@@ -346,13 +348,13 @@ impl AlertRegistry {
     /// [`get_per_owner_alert_limit`].  Treat `0` as the canonical "no limit"
     /// sentinel.
     ///
-    /// # Minimum limit
+    /// # Accepted values
     ///
-    /// A non-zero `limit` must be **at least 1**.  Values in the range `1..=u32::MAX`
-    /// are accepted; the contract enforces a floor of `1` so that a
-    /// mistaken call such as `set_per_owner_alert_limit(0)` cannot silently
-    /// brick all existing owners when the admin actually intended to keep some
-    /// cap in place.  Use `0` explicitly and intentionally to remove the cap.
+    /// Every `u32` value is accepted. There is no minimum beyond `0`, which
+    /// means "unlimited". A call with `0` removes an existing cap, so check the
+    /// value before submitting. `ContractError::LimitTooLong` is no longer
+    /// returned by this function; the variant is kept so existing error codes
+    /// do not change.
     ///
     /// # Auth
     /// Requires a valid Stellar auth signature from `admin`.
@@ -371,10 +373,8 @@ impl AlertRegistry {
     ) -> Result<(), ContractError> {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
-        // Reject accidentally-low non-zero limits. `0` is the explicit "no limit" sentinel.
-        if limit != 0 && limit < 1 {
-            return Err(ContractError::LimitTooLow);
-        }
+        // Every `u32` is a valid limit. `0` is the sentinel for "unlimited"
+        // (no per-owner cap), and any positive value is a cap.
         env.storage().instance().set(&symbol_short!("LIMIT"), &limit);
         // Record every limit change on-chain, so the audit trail shows it (#248).
         env.events().publish((symbol_short!("admin"), symbol_short!("limit")), (admin, limit));
@@ -3133,6 +3133,20 @@ mod tests {
         client.initialize(&admin).unwrap();
         env.set_auths(&[]);
         client.set_per_owner_alert_limit(&admin, &5u32);
+    }
+
+    // Every u32 is accepted, including 0 (unlimited) and u32::MAX. The dead
+    // "limit < 1" guard that used to reject some values has been removed.
+    #[test]
+    fn test_set_per_owner_alert_limit_accepts_all_values() {
+        let (env, client) = setup();
+        let admin = Address::generate(&env);
+        client.initialize(&admin).unwrap();
+
+        for limit in [0u32, 1, 2, u32::MAX] {
+            client.set_per_owner_alert_limit(&admin, &limit).unwrap();
+            assert_eq!(client.get_per_owner_alert_limit(), limit);
+        }
     }
 
     #[test]
