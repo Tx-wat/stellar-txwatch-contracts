@@ -67,15 +67,10 @@ for the full storage and TTL model.
 
 See [docs/events.md](../../docs/events.md) for the event schema.
 
-## Build
+## Quick start
 
 ```bash
 cargo build --release --target wasm32-unknown-unknown
-```
-
-## Test
-
-```bash
 cargo test
 ```
 
