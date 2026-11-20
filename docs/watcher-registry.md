@@ -182,7 +182,7 @@ existing admin changes nothing. Emits `("admin", "add")` with `(caller, new_admi
 remove_admin(env, caller: Address, target_admin: Address) -> Result<(), ContractError>
 ```
 
-Removes `target_admin`. Refused with `LastAdmin` when it would leave the set empty. Emits
+Removes `target_admin`. Refused with `NotAdmin` when `target_admin` is not in the admin set (#454), and with `LastAdmin` when it would leave the set empty. Emits
 `("admin", "remove")`.
 
 ### `replace_watcher`

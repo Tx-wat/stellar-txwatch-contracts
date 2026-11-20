@@ -33,6 +33,8 @@ pub enum ContractError {
     BatchTooLarge = 7,
     /// Returned when registration would exceed [`MAX_WATCHERS`].
     WatcherLimitExceeded = 8,
+    /// Returned by `remove_admin` when `target_admin` is not in the admin set.
+    NotAdmin = 9,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -154,6 +156,11 @@ impl WatcherRegistry {
         Self::assert_not_paused(&env)?;
 
         let admins = Self::load_admins(&env);
+        // Refuse no-op removals so a caller mistake (wrong address) surfaces as
+        // an error instead of a silent success.
+        if !admins.contains(&target_admin) {
+            return Err(ContractError::NotAdmin);
+        }
         if admins.len() <= 1 {
             return Err(ContractError::LastAdmin);
         }
@@ -227,8 +234,10 @@ impl WatcherRegistry {
     ///
     /// Idempotent — registering an already-authorized watcher is a no-op.
     ///
-    /// `expires_at` is an optional ledger timestamp after which the watcher is
-    /// no longer authorized (see [`WatcherRegistry::renew_watcher`]).
+    /// `expires_at` is an optional ledger **timestamp** (Unix seconds, from
+    /// `env.ledger().timestamp()`) after which the watcher is no longer
+    /// authorized (see [`WatcherRegistry::renew_watcher`]). It is NOT a ledger
+    /// sequence number; see `docs/ttl.md` ("Time units") for the distinction.
     pub fn register_watcher(
         env: Env,
         admin: Address,
@@ -519,6 +528,8 @@ impl WatcherRegistry {
             return false;
         }
         match Self::load_expiries(&env).get(watcher) {
+            // `exp` is a Unix-seconds timestamp: compare against
+            // `ledger().timestamp()`, never `ledger().sequence()`.
             Some(exp) => env.ledger().timestamp() <= exp,
             None => true,
         }
@@ -713,6 +724,7 @@ impl WatcherRegistry {
     }
 
     /// Set (`Some`) or clear (`None`) a watcher's expiry timestamp.
+    /// `expires_at` is a timestamp in Unix seconds (`ledger().timestamp()` units).
     fn set_expiry(env: &Env, watcher: &Address, expires_at: Option<u64>) {
         let mut m = Self::load_expiries(env);
         match expires_at {

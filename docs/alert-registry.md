@@ -292,6 +292,7 @@ If a `WatcherRegistry` is configured (via `set_watcher_registry`), `querier` mus
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query (gated when a watcher registry is set) |
 | `target_contract` | `Address` | Contract address to query |
 
 **Returns:** `Vec<AlertConfig>` — may be empty.
@@ -304,17 +305,20 @@ Paginated variant of `get_active_alerts_for_contract`. `offset`/`limit` apply to
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query (gated when a watcher registry is set) |
 | `target_contract` | `Address` | Contract address to query |
 | `offset` | `u32` | Number of active alerts to skip |
 | `limit` | `u32` | Max alerts to return |
 
-**Returns:** `Vec<AlertConfig>`
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — `NotAWatcher` when gated and `querier` is not a watcher.
 
 ---
 
 ### `get_alert_ids_by_owner` / `get_alert_ids_for_contract`
 
-Return only the live alert IDs (entries still in storage) from the owner / contract index, without deserializing configs. Cheaper than the full getters; no watcher gating.
+Return only the live alert IDs (entries still in storage) from the owner / contract index, without deserializing configs. Cheaper than the full getters.
+
+Both take a `querier` and are gated like the config getters: when a `WatcherRegistry` is configured, `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher` (#453).
 
 ### `get_alerts_by_owner`
 

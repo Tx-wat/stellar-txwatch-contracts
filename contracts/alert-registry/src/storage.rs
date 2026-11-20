@@ -303,6 +303,10 @@ pub fn check_rate_limit(env: &Env, owner: &Address) -> Result<(), ContractError>
         return Err(ContractError::ContractPaused);
     }
 
+    // UNIT: rate-limit windows are measured in LEDGER SEQUENCE numbers
+    // (ledger count), NOT Unix-seconds timestamps. Do not compare this value
+    // against `ledger().timestamp()` or against watcher `expires_at` values,
+    // which are timestamps. See `docs/ttl.md` ("Time units").
     let now = env.ledger().sequence();
     let key = DataKey::RateLimit(owner.clone());
     let (window_start, count): (u32, u32) = env

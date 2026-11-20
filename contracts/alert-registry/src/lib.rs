@@ -1121,19 +1121,32 @@ impl AlertRegistry {
     }
 
     /// Return the IDs of live alerts watching `target_contract` without
-    /// deserializing the configs. IDs whose storage entry is gone are skipped.
-    #[must_use]
-    pub fn get_alert_ids_for_contract(env: Env, target_contract: Address) -> Vec<u64> {
+    ///
+    /// If a `WatcherRegistry` is configured, `querier` must be a registered
+    /// watcher or the call returns [`ContractError::NotAWatcher`]. ID lists
+    /// reveal the number and existence of alerts, so they are gated (#453).
+    pub fn get_alert_ids_for_contract(
+        env: Env,
+        querier: Address,
+        target_contract: Address,
+    ) -> Result<Vec<u64>, ContractError> {
+        Self::assert_watcher_if_configured(&env, &querier)?;
         let ids = Self::contract_index(&env, &target_contract);
-        Self::live_ids(&env, &ids)
+        Ok(Self::live_ids(&env, &ids))
     }
 
     /// Return the IDs of live alerts owned by `owner` without deserializing
     /// the configs. IDs whose storage entry is gone are skipped.
-    #[must_use]
-    pub fn get_alert_ids_by_owner(env: Env, owner: Address) -> Vec<u64> {
+    ///
+    /// Gated by the watcher registry when one is configured (#453).
+    pub fn get_alert_ids_by_owner(
+        env: Env,
+        querier: Address,
+        owner: Address,
+    ) -> Result<Vec<u64>, ContractError> {
+        Self::assert_watcher_if_configured(&env, &querier)?;
         let ids = Self::owner_index(&env, &owner);
-        Self::live_ids(&env, &ids)
+        Ok(Self::live_ids(&env, &ids))
     }
 
     /// Retrieve only the active alert configs that watch a given contract address.
@@ -1141,21 +1154,32 @@ impl AlertRegistry {
     /// Equivalent to [`get_alerts_for_contract`] but filters out any entries
     /// where `active == false`. Returns an empty vec if no active alerts exist
     /// for `target_contract`.
-    pub fn get_active_alerts_for_contract(env: Env, target_contract: Address) -> Vec<AlertConfig> {
+    ///
+    /// If a `WatcherRegistry` is configured, `querier` must be a registered
+    /// watcher or the call returns [`ContractError::NotAWatcher`] (#452).
+    pub fn get_active_alerts_for_contract(
+        env: Env,
+        querier: Address,
+        target_contract: Address,
+    ) -> Result<Vec<AlertConfig>, ContractError> {
+        Self::assert_watcher_if_configured(&env, &querier)?;
         let ids = Self::contract_index(&env, &target_contract);
-        Self::active_configs_for_ids(&env, &ids)
+        Ok(Self::active_configs_for_ids(&env, &ids))
     }
 
     /// Paginated variant of [`get_active_alerts_for_contract`].
     ///
     /// `offset` and `limit` apply to the *active* alerts (after filtering);
     /// `limit` is clamped to [`MAX_BATCH_SIZE`].
+    /// Gated by the watcher registry when one is configured (#452).
     pub fn get_active_alerts_paginated(
         env: Env,
+        querier: Address,
         target_contract: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<AlertConfig> {
+    ) -> Result<Vec<AlertConfig>, ContractError> {
+        Self::assert_watcher_if_configured(&env, &querier)?;
         let ids = Self::contract_index(&env, &target_contract);
         let active = Self::active_configs_for_ids(&env, &ids);
         let effective_limit = limit.min(MAX_BATCH_SIZE);
@@ -1165,7 +1189,7 @@ impl AlertRegistry {
         for i in start..end {
             out.push_back(active.get(i).unwrap());
         }
-        out
+        Ok(out)
     }
 
     /// Retrieve all alert configs owned by a given address.
@@ -2812,7 +2836,7 @@ mod tests {
         let all = client.get_alerts_for_contract(&owner, &target).unwrap();
         assert_eq!(all.len(), 2);
 
-        let active = client.get_active_alerts_for_contract(&target);
+        let active = client.get_active_alerts_for_contract(&target, &target).unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active.get(0).unwrap().label, str(&env, "Active"));
         let _ = id1;
@@ -2836,7 +2860,7 @@ mod tests {
 
         client.update_alert(&owner, &id, &vec![&env, str(&env, "rule:transfer")], &false);
 
-        let active = client.get_active_alerts_for_contract(&target);
+        let active = client.get_active_alerts_for_contract(&target, &target).unwrap();
         assert_eq!(active.len(), 0);
     }
 
@@ -2872,7 +2896,7 @@ mod tests {
             &None,
         );
 
-        let active = client.get_active_alerts_for_contract(&target);
+        let active = client.get_active_alerts_for_contract(&target, &target).unwrap();
         assert_eq!(active.len(), 2);
     }
 
@@ -3199,8 +3223,8 @@ mod tests {
             ));
         }
         client.remove_alert(&owner, &ids.get(1).unwrap());
-        assert_eq!(client.get_alert_ids_by_owner(&owner).len(), 2);
-        assert_eq!(client.get_alert_ids_for_contract(&target).len(), 2);
+        assert_eq!(client.get_alert_ids_by_owner(&owner, &owner).unwrap().len(), 2);
+        assert_eq!(client.get_alert_ids_for_contract(&target, &target).unwrap().len(), 2);
     }
 
     // #33 — update_target_contract moves the alert to a new contract index

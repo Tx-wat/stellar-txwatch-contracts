@@ -54,6 +54,23 @@ fn removing_the_last_admin_is_refused() {
 }
 
 #[test]
+fn remove_admin_for_non_admin_returns_not_admin_and_changes_nothing() {
+    let (env, client, admin) = setup();
+    let second = Address::generate(&env);
+    client.add_admin(&admin, &second);
+    let stranger = Address::generate(&env);
+
+    assert_eq!(
+        client.try_remove_admin(&admin, &stranger),
+        Err(Ok(ContractError::NotAdmin))
+    );
+    let admins = client.get_admins();
+    assert_eq!(admins.len(), 2);
+    assert!(admins.contains(&admin));
+    assert!(admins.contains(&second));
+}
+
+#[test]
 fn transfer_admin_replaces_the_admin_set() {
     let (env, client, admin) = setup();
     let new_admin = Address::generate(&env);
@@ -99,4 +116,31 @@ fn is_authorized_is_true_only_for_registered_watchers() {
     client.register_watcher(&admin, &watcher, &None);
     assert!(client.is_authorized(&watcher));
     assert!(!client.is_authorized(&other));
+}
+
+#[test]
+fn watcher_expiry_is_compared_in_timestamp_units_not_sequence() {
+    // Regression for #451: `expires_at` is Unix seconds. Advancing the ledger
+    // *sequence* alone must not expire a watcher, and advancing the *timestamp*
+    // past `expires_at` must.
+    let (env, client, admin) = setup();
+    let watcher = Address::generate(&env);
+
+    env.ledger().with_mut(|l| {
+        l.timestamp = 1_000;
+        l.sequence_number = 10;
+    });
+    client.register_watcher(&admin, &watcher, &Some(2_000));
+
+    // Huge sequence jump, timestamp still before expiry: still authorized.
+    env.ledger().with_mut(|l| {
+        l.sequence_number = 1_000_000;
+    });
+    assert!(client.is_watcher_authorized(&watcher));
+
+    // Timestamp moves past expiry while sequence is unchanged: deauthorized.
+    env.ledger().with_mut(|l| {
+        l.timestamp = 2_001;
+    });
+    assert!(!client.is_watcher_authorized(&watcher));
 }

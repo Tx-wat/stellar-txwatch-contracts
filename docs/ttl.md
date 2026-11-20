@@ -133,3 +133,19 @@ on-chain. A keeper finds near-expiry alerts client-side:
 
 Adding an on-chain `last_renewed` field was considered and rejected. It would duplicate the
 TTL the network already tracks, and it would not show archival, which is what matters.
+
+## Time units
+
+The contracts use two different clocks. They are **not interchangeable**:
+
+| Quantity | Unit | Source | Used by |
+|----------|------|--------|---------|
+| Storage TTL (`extend_ttl`, `bump_alert`) | ledgers (ledger count) | — | persistent/instance entry lifetimes |
+| Rate-limit window (`check_rate_limit`) | ledger **sequence** number | `env.ledger().sequence()` | alert-registry registration rate limit |
+| Watcher `expires_at` | Unix **timestamp** (seconds) | `env.ledger().timestamp()` | watcher-registry expiry |
+| Alert `created_at` / `updated_at` | Unix **timestamp** (seconds) | `env.ledger().timestamp()` | alert-registry records |
+
+Any feature that compares an expiry or a timestamp against a rate-limit window
+(or the reverse) must convert between the two units explicitly. A sequence
+number is roughly `timestamp / 5` only on average; ledger close times vary, so
+do not use that approximation for security-relevant checks.
