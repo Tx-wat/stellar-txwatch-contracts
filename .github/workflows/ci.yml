@@ -44,6 +44,10 @@ jobs:
           done < <(find . \( -name '*.rs' -o -name '*.ts' \) -not -path '*/target/*' -not -path '*/node_modules/*')
           exit $missing
 
+      # Issue #474 — fast WASM type/compile check before the full release build
+      - name: Check (WASM target)
+        run: cargo check --target wasm32-unknown-unknown
+
       # Issue #99 — WASM build verification
       - name: Build (WASM)
         run: cargo build --release --target wasm32-unknown-unknown
@@ -51,6 +55,10 @@ jobs:
       # Issue #102 — Test suite verification
       - name: Unit tests
         run: cargo test -p alert-registry -p watcher-registry
+
+      # Issue #472 — run feature-gated tests (e.g. gating_tests behind `testutils`)
+      - name: Tests (all features)
+        run: cargo test --all-features
 
       # Issue #300 — Integration test verification (cross-contract behavior)
       - name: Integration tests
@@ -76,3 +84,30 @@ jobs:
 
       - name: Cargo audit
         run: cargo audit
+
+  # Issue #473 — run unit tests on the pinned toolchain and on newer channels
+  # so regressions from new Rust releases are caught early. `rustup override`
+  # takes precedence over rust-toolchain.toml, so each leg really runs its
+  # own channel. The beta leg is non-blocking.
+  toolchain-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [1.88.0, stable, beta]
+    continue-on-error: ${{ matrix.toolchain == 'beta' }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install Rust ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b  # master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          targets: wasm32-unknown-unknown
+
+      - name: Override toolchain for this job
+        run: rustup override set ${{ matrix.toolchain }}
+
+      - name: Unit tests (${{ matrix.toolchain }})
+        run: cargo test -p alert-registry -p watcher-registry

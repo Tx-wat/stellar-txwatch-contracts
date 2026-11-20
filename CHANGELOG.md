@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `WatcherRegistry::register_watcher` enforces `MAX_WATCHERS` (100) and returns the new `ContractError::WatcherLimitExceeded` (#232). See `docs/watcher-registry.md`.
 - `clear_all_watchers` resets the watcher count to 0; covered by a unit test (#230).
 - Documented the decision to keep the Vec-based `is_authorized` in `docs/ADR-001-watcher-authorization-storage.md` (#233).
+- **Migration guide:** added `docs/migrations/v0.2.md`, which covers the breaking `AlertConfig.tags` field and the new trailing `tags` argument on `register_alert`, including TypeScript caller updates and how existing on-chain entries deserialise (`tags = None`) (#471).
 - **Breaking change:** `AlertRegistry::get_per_owner_alert_limit` now returns
 ` Option<u32>` instead of `u32`. It returns `None` when no limit has been set,
 `Some(0)` when the admin explicitly configured an unlimited limit, and
