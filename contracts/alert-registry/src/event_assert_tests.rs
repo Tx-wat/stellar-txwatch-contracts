@@ -89,7 +89,7 @@ fn propose_webhook_emits_alert_wh_prop() {
         &vec![&env, String::from_str(&env, "rule:transfer")],
         &None,
     );
-    client.propose_webhook(&owner, &id, &String::from_str(&env, "new-hash")).unwrap();
+    client.propose_webhook(&owner, &id, &String::from_str(&env, "new-hash"));
     assert!(emitted(&env, "alert", "wh_prop"), "propose_webhook must emit (alert, wh_prop)");
 }
 
@@ -105,9 +105,72 @@ fn confirm_webhook_emits_alert_webhook() {
         &vec![&env, String::from_str(&env, "rule:transfer")],
         &None,
     );
-    client.propose_webhook(&owner, &id, &String::from_str(&env, "new-hash")).unwrap();
-    client.confirm_webhook(&owner, &id).unwrap();
+    client.propose_webhook(&owner, &id, &String::from_str(&env, "new-hash"));
+    client.confirm_webhook(&owner, &id);
     assert!(emitted(&env, "alert", "webhook"), "#204: confirm_webhook must emit (alert, webhook)");
     // Confirm the old non-standard event is NOT emitted.
     assert!(!emitted(&env, "alert", "wh_conf"), "#204: wh_conf must NOT be emitted by confirm_webhook");
+}
+
+// ── #423: set_watcher_registry emits an audit event ─────────────────────────
+
+/// Returns the data of the first event with topics `(a, b)`, if any.
+fn event_data(env: &Env, a: &str, b: &str) -> Option<soroban_sdk::Val> {
+    let want_a = Symbol::new(env, a);
+    let want_b = Symbol::new(env, b);
+    env.events().all().iter().find_map(|(_contract, topics, data)| {
+        let matches = topics.len() == 2
+            && Symbol::try_from_val(env, &topics.get(0).unwrap()).ok() == Some(want_a.clone())
+            && Symbol::try_from_val(env, &topics.get(1).unwrap()).ok() == Some(want_b.clone());
+        matches.then_some(data)
+    })
+}
+
+#[test]
+fn set_watcher_registry_emits_admin_watcher_reg_with_admin_and_registry() {
+    let (env, client, _owner, _target) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let registry = Address::generate(&env);
+
+    client.set_watcher_registry(&admin, &registry);
+
+    let data = event_data(&env, "admin", "watcher_reg")
+        .expect("#423: set_watcher_registry must emit (admin, watcher_reg)");
+    let decoded: (Address, Address) = <(Address, Address)>::try_from_val(&env, &data).unwrap();
+    assert_eq!(decoded, (admin, registry));
+}
+
+#[test]
+fn set_watcher_registry_emits_on_every_successful_call() {
+    let (env, client, _owner, _target) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let first = Address::generate(&env);
+    client.set_watcher_registry(&admin, &first);
+    assert!(event_data(&env, "admin", "watcher_reg").is_some());
+
+    let second = Address::generate(&env);
+    client.set_watcher_registry(&admin, &second);
+    let data = event_data(&env, "admin", "watcher_reg")
+        .expect("#423: second change must also emit the audit event");
+    let decoded: (Address, Address) = <(Address, Address)>::try_from_val(&env, &data).unwrap();
+    assert_eq!(decoded.1, second);
+}
+
+#[test]
+fn rejected_set_watcher_registry_emits_no_audit_event() {
+    let (env, client, _owner, _target) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let attacker = Address::generate(&env);
+    let registry = Address::generate(&env);
+
+    let result = client.try_set_watcher_registry(&attacker, &registry);
+    assert!(result.is_err());
+    assert!(
+        event_data(&env, "admin", "watcher_reg").is_none(),
+        "#423: a rejected call must not emit (admin, watcher_reg)"
+    );
 }

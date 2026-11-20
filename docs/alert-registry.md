@@ -424,18 +424,36 @@ Step 2 of the two-step webhook rotation flow. Promotes `pending_webhook_hash` to
 
 Extends the TTL of an alert and its index entries without modifying any data. This is the recommended way to keep an alert alive without changing `updated_at` (which would cause it to appear in incremental-sync results via `get_alerts_modified_since`).
 
-**Requires auth:** `caller` (must match `owner` of the config)
+**Requires auth:** `caller` (must be the `owner` of the config, or the delegate set by `set_delegate`)
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
-| `caller` | `Address` | Must be the alert owner |
+| `caller` | `Address` | The alert owner or its delegate |
 | `config_id` | `u64` | ID of the alert to renew |
 
 **Returns:** `Result<(), ContractError>`
 
-**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+**Events:** emits `(alert, bump)` with data `(config_id, DEFAULT_TTL)`.
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is neither the owner nor the delegate.
+
+---
+
+### `set_delegate` / `get_delegate`
+
+Lets an alert owner authorise another address (a delegate, e.g. an off-chain watcher service) to call `renew_alert_ttl` for one alert (#425).
+
+`set_delegate(caller, config_id, delegate: Option<Address>)`:
+
+- **Requires auth:** `caller`, who must be the alert owner.
+- Passing `Some(address)` sets the delegate; passing `None` clears it and revokes access immediately.
+- The delegate cannot transfer, update or remove the alert, and cannot change the delegate.
+- Removing the alert also clears its delegate.
+- **Errors:** `AlertNotFound`; `Unauthorized` if caller is not the owner.
+
+`get_delegate(config_id) -> Option<Address>` is a read-only query with no auth.
 
 ---
 

@@ -146,6 +146,19 @@ Emitted when the per-owner alert limit is changed.
 
 **Status:** ✅ implemented (`set_per_owner_alert_limit`)
 
+### `admin.watcher_reg`
+
+Emitted when the admin changes the watcher registry address used for read gating
+(audit trail, #423). Emitted on every successful call.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("admin")` |
+| Topic 1 | `Symbol("watcher_reg")` |
+| Data | `(admin: Address, watcher_registry: Address)` |
+
+**Status:** ✅ implemented (`set_watcher_registry`)
+
 ---
 
 ## WatcherRegistry

@@ -6,6 +6,7 @@
 
 #![cfg(test)]
 
+extern crate alloc;
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
 
 use crate::{AlertRegistry, AlertRegistryClient, MAX_BATCH_SIZE};
@@ -109,7 +110,7 @@ fn limit_above_max_batch_size_is_clamped() {
 
     // Register MAX_BATCH_SIZE + 5 alerts so there is more data than the cap.
     for i in 0..(MAX_BATCH_SIZE + 5) {
-        let label = String::from_str(&env, &format!("alert{i}"));
+        let label = String::from_str(&env, &alloc::format!("alert{i}"));
         client.register_alert(
             &owner,
             &target,

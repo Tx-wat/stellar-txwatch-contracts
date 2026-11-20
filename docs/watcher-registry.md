@@ -80,6 +80,20 @@ Renamed from `is_authorized` for clarity in cross-contract call contexts — the
 
 ---
 
+### `is_watcher_authorized_at`
+
+```
+is_watcher_authorized_at(env, watcher: Address, at: u64) -> bool
+```
+
+Time-locked authorization check (#424). Answers "was `watcher` authorized at ledger timestamp `at`?" using the stored expiry rather than the current ledger time.
+
+- Returns `true` when the watcher is registered and either has no expiry or `at <= expiry` (the boundary is inclusive).
+- Returns `false` when the watcher is not registered.
+- Read-only: no auth required; works while the registry is paused.
+
+`is_watcher_authorized` is equivalent to `is_watcher_authorized_at(watcher, ledger.timestamp())`.
+
 ### `get_watchers`
 
 Returns all currently authorized watcher addresses.
@@ -223,7 +237,15 @@ Returns the admin set. Read-only.
 register_watcher(env, admin, watcher, label: Option<String>) -> Result<(), ContractError>
 ```
 
-`label` is optional (max 64 bytes, defaults to empty; longer returns `LabelTooLong` = 7). Each watcher gets a `WatcherInfo { address, label, registered_at, registered_by }` entry in persistent storage keyed by address. The `Watchers` vec stays as the enumeration index and `is_authorized` is an O(1) lookup.
+`label` is optional (max 64 bytes, defaults to empty; longer returns `LabelTooLong` = 10). Each watcher gets a `WatcherInfo { address, label, registered_at, registered_by }` entry in persistent storage keyed by address. The `Watchers` vec stays as the enumeration index and `is_authorized` is an O(1) lookup.
+
+### `get_watcher_registered_at`
+
+```
+get_watcher_registered_at(env, watcher: Address) -> Option<u64>
+```
+
+Returns the ledger timestamp at which `watcher` was registered (#426), read from `WatcherInfo.registered_at`. Returns `None` if the watcher is not registered (including after removal). Read-only, no auth.
 
 ### `get_watcher_info`
 

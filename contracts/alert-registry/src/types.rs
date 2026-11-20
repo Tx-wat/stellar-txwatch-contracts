@@ -101,7 +101,7 @@ pub struct AlertInput {
 /// (~24 hours). Use `AlertRegistry::bump_alert` to extend up to `MAX_TTL`.
 /// See `docs/ttl.md` for expiry details.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AlertConfig {
     /// Human-readable label for the alert (max 128 bytes).
     pub label: String,
