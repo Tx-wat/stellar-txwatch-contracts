@@ -41,7 +41,8 @@ fn register_alert_empty_rules_returns_empty_rules_error() {
         &target,
         &str(&env, "Alert"),
         &hash64(&env),
-        &vec![&env], // empty rules, &None
+        &vec![&env],
+        &None,
     );
 
     assert_eq!(result, Err(Ok(ContractError::EmptyRules)));
@@ -311,7 +312,7 @@ fn paginated_limit_exceeding_max_batch_size_is_clamped() {
     // limit = 1000 must be clamped to MAX_BATCH_SIZE
     let page = client
         .get_contract_alerts_paginated(&querier, &target, &0u32, &1000u32)
-        .unwrap();
+        ;
 
     assert_eq!(
         page.len(),
@@ -344,7 +345,7 @@ fn paginated_owner_limit_exceeding_max_batch_size_is_clamped() {
 
     let page = client
         .get_alerts_by_owner_paginated(&querier, &owner, &0u32, &u32::MAX)
-        .unwrap();
+        ;
 
     assert_eq!(
         page.len(),
@@ -374,7 +375,7 @@ fn paginated_limit_within_max_batch_size_is_exact() {
 
     let page = client
         .get_contract_alerts_paginated(&querier, &target, &0u32, &5u32)
-        .unwrap();
+        ;
 
     assert_eq!(page.len(), 5, "limit=5 (below MAX_BATCH_SIZE) must return exactly 5");
 }

@@ -1,7 +1,7 @@
 #![no_std]
 #![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Map, Symbol, Vec,
+    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, Map, String, Symbol, Vec,
 };
 
 /// Number of ledgers to extend instance storage TTL by on each access.
@@ -13,6 +13,10 @@ pub const MAX_BATCH_SIZE: u32 = 20;
 
 /// Maximum number of watchers that may be registered at once.
 pub const MAX_WATCHERS: u32 = 1_000;
+
+/// Percentage of [`MAX_WATCHERS`] at which a `("watcher", "capacity")` event
+/// starts being emitted on registration.
+pub const CAPACITY_WARN_PERCENT: u32 = 80;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
@@ -33,6 +37,25 @@ pub enum ContractError {
     BatchTooLarge = 7,
     /// Returned when registration would exceed [`MAX_WATCHERS`].
     WatcherLimitExceeded = 8,
+    /// Returned by `transfer_admin` when more than one admin exists.
+    MultipleAdminsExist = 9,
+    /// Returned when a watcher label exceeds [`MAX_LABEL_BYTES`].
+    LabelTooLong = 10,
+}
+
+/// Maximum watcher label length in bytes.
+pub const MAX_LABEL_BYTES: u32 = 64;
+/// Maximum page size for `get_all_watchers_paginated`.
+pub const MAX_PAGE_LIMIT: u32 = 50;
+
+/// Metadata stored for each registered watcher.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WatcherInfo {
+    pub address: Address,
+    pub label: String,
+    pub registered_at: u64,
+    pub registered_by: Address,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -48,6 +71,8 @@ pub enum DataKey {
     Paused,
     /// Stores a `Map<Address, u64>` of watcher expiry timestamps.
     Expiries,
+    /// Persistent `WatcherInfo` keyed by watcher address.
+    WatcherInfo(Address),
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -235,6 +260,31 @@ impl WatcherRegistry {
         watcher: Address,
         expires_at: Option<u64>,
     ) -> Result<(), ContractError> {
+        Self::register_watcher_inner(env, admin, watcher, expires_at, None)
+    }
+
+    /// Register a watcher with an optional human-readable `label`.
+    ///
+    /// Same semantics as [`WatcherRegistry::register_watcher`]. `label` must be
+    /// at most [`MAX_LABEL_BYTES`] bytes; longer labels return
+    /// [`ContractError::LabelTooLong`] before any state is touched.
+    pub fn register_watcher_with_label(
+        env: Env,
+        admin: Address,
+        watcher: Address,
+        expires_at: Option<u64>,
+        label: Option<String>,
+    ) -> Result<(), ContractError> {
+        Self::register_watcher_inner(env, admin, watcher, expires_at, label)
+    }
+
+    fn register_watcher_inner(
+        env: Env,
+        admin: Address,
+        watcher: Address,
+        expires_at: Option<u64>,
+        label: Option<String>,
+    ) -> Result<(), ContractError> {
         admin.require_auth();
         Self::assert_admin(&env, &admin)?;
         Self::assert_not_paused(&env)?;
@@ -247,15 +297,24 @@ impl WatcherRegistry {
         if env.storage().persistent().has(&DataKey::WatcherInfo(watcher.clone())) {
             return Ok(()); // already registered, idempotent
         }
+        let mut watchers = Self::load_watchers(&env);
         if watchers.len() >= MAX_WATCHERS {
             return Err(ContractError::WatcherLimitExceeded);
         }
+        let info = WatcherInfo {
+            address: watcher.clone(),
+            label,
+            registered_at: env.ledger().timestamp(),
+            registered_by: admin.clone(),
+        };
+        Self::save_info(&env, &info);
         Self::set_expiry(&env, &watcher, expires_at);
         watchers.push_back(watcher.clone());
         env.storage().instance().set(&DataKey::Watchers, &watchers);
         Self::extend_instance_ttl(&env);
 
         Self::increment_watcher_count(&env);
+        Self::maybe_emit_capacity(&env);
 
         env.events().publish(
             (symbol_short!("watcher"), symbol_short!("register")),
@@ -311,6 +370,7 @@ impl WatcherRegistry {
         // watcher's trust has been revoked.
         if removed {
             Self::set_expiry(&env, &watcher, None);
+            env.storage().persistent().remove(&DataKey::WatcherInfo(watcher.clone()));
             Self::decrement_watcher_count(&env);
             env.events().publish(
                 (symbol_short!("watcher"), symbol_short!("remove")),
@@ -445,6 +505,9 @@ impl WatcherRegistry {
             Self::increment_watcher_count(&env);
             env.events()
                 .publish((symbol_short!("watcher"), symbol_short!("register")), w);
+        }
+        if added.len() > 0 {
+            Self::maybe_emit_capacity(&env);
         }
 
         Ok(added.len())
@@ -674,6 +737,23 @@ impl WatcherRegistry {
         env.storage().persistent().extend_ttl(&key, DEFAULT_TTL, DEFAULT_TTL);
     }
 
+    /// Emit `("watcher", "capacity")` with data `(count, MAX_WATCHERS)` when the
+    /// current watcher count is at or above `MAX_WATCHERS * CAPACITY_WARN_PERCENT / 100`.
+    /// Called only after registrations, never on removal.
+    fn maybe_emit_capacity(env: &Env) {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("W_CNT"))
+            .unwrap_or(0u32);
+        if count >= MAX_WATCHERS * CAPACITY_WARN_PERCENT / 100 {
+            env.events().publish(
+                (symbol_short!("watcher"), symbol_short!("capacity")),
+                (count, MAX_WATCHERS),
+            );
+        }
+    }
+
     fn increment_watcher_count(env: &Env) {
         let count: u32 = env
             .storage()
@@ -763,7 +843,7 @@ mod watcher_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, testutils::Events as _, Env};
+    use soroban_sdk::{testutils::Address as _, testutils::Events as _, Env, FromVal, IntoVal, Val};
 
     fn setup() -> (Env, Address, WatcherRegistryClient<'static>) {
         let env = Env::default();
@@ -798,7 +878,7 @@ mod tests {
         let (env, admin, client) = setup();
         let w = Address::generate(&env);
         let w2 = Address::generate(&env);
-        client.register_watcher(&admin, &w, &Some(String::from_str(&env, "node-1")));
+        client.register_watcher_with_label(&admin, &w, &None, &Some(String::from_str(&env, "node-1")));
         client.register_watcher(&admin, &w2, &None);
         let info = client.get_watcher_info(&w).unwrap();
         assert_eq!(info.label, String::from_str(&env, "node-1"));
@@ -815,7 +895,7 @@ mod tests {
         let w = Address::generate(&env);
         let long = String::from_bytes(&env, &[b'a'; 65]);
         assert_eq!(
-            client.try_register_watcher(&admin, &w, &Some(long)),
+            client.try_register_watcher_with_label(&admin, &w, &None, &Some(long)),
             Err(Ok(ContractError::LabelTooLong))
         );
     }
@@ -1233,14 +1313,17 @@ mod tests {
         client.add_admin(&admin, &second_admin);
 
         assert_eq!(client.try_remove_admin(&admin, &admin).unwrap(), Ok(()));
-        assert!(!client.is_admin(&admin));
-        assert!(client.is_admin(&second_admin));
 
+        // Read events before any further contract call: each invocation resets
+        // the host event buffer, so later `is_admin` calls would hide this event.
         let (_, topics, _) = env.events().all().last().unwrap();
         assert_eq!(
             topics,
             (symbol_short!("admin"), Symbol::new(&env, "self_remove")).into_val(&env)
         );
+
+        assert!(!client.is_admin(&admin));
+        assert!(client.is_admin(&second_admin));
     }
 
     // 17. get_admins returns all admins
@@ -1360,7 +1443,7 @@ mod tests {
     fn test_clear_all_watchers_resets_count() {
         let (env, admin, client) = setup();
         for _ in 0..3 {
-            client.register_watcher(&admin, &Address::generate(&env));
+            client.register_watcher(&admin, &Address::generate(&env), &None);
         }
         assert_eq!(client.get_watcher_count(), 3);
         client.clear_all_watchers(&admin);
@@ -1371,13 +1454,87 @@ mod tests {
     fn test_register_watcher_limit_enforced() {
         let (env, admin, client) = setup();
         for _ in 0..MAX_WATCHERS {
-            client.register_watcher(&admin, &Address::generate(&env));
+            client.register_watcher(&admin, &Address::generate(&env), &None);
         }
         assert_eq!(client.get_watcher_count(), MAX_WATCHERS);
         assert_eq!(
-            client.try_register_watcher(&admin, &Address::generate(&env)),
+            client.try_register_watcher(&admin, &Address::generate(&env), &None),
             Err(Ok(ContractError::WatcherLimitExceeded))
         );
+    }
+
+    /// Data of the most recent `("watcher", "capacity")` event in the host buffer.
+    /// Only meaningful immediately after the contract call that emitted it.
+    fn capacity_event_data(env: &Env) -> Option<(u32, u32)> {
+        let expected: Vec<Val> =
+            (symbol_short!("watcher"), symbol_short!("capacity")).into_val(env);
+        for (_, topics, data) in env.events().all().iter() {
+            if topics == expected {
+                return Some(<(u32, u32)>::from_val(env, &data));
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn test_capacity_event_not_emitted_below_threshold() {
+        let (env, admin, client) = setup();
+        client.register_watcher(&admin, &Address::generate(&env), &None);
+        assert!(capacity_event_data(&env).is_none());
+    }
+
+    #[test]
+    fn test_capacity_event_emitted_at_threshold() {
+        let (env, admin, client) = setup();
+        let threshold = MAX_WATCHERS * CAPACITY_WARN_PERCENT / 100;
+        for _ in 0..threshold - 1 {
+            client.register_watcher(&admin, &Address::generate(&env), &None);
+        }
+        // The call that registers number `threshold - 1` must not emit.
+        assert!(capacity_event_data(&env).is_none());
+
+        client.register_watcher(&admin, &Address::generate(&env), &None);
+        assert_eq!(capacity_event_data(&env), Some((threshold, MAX_WATCHERS)));
+    }
+
+    #[test]
+    fn test_capacity_event_not_emitted_on_removal() {
+        let (env, admin, client) = setup();
+        let threshold = MAX_WATCHERS * CAPACITY_WARN_PERCENT / 100;
+        let mut last = Address::generate(&env);
+        for _ in 0..threshold {
+            last = Address::generate(&env);
+            client.register_watcher(&admin, &last, &None);
+        }
+        assert_eq!(capacity_event_data(&env), Some((threshold, MAX_WATCHERS)));
+
+        client.remove_watcher(&admin, &last);
+        assert!(capacity_event_data(&env).is_none());
+    }
+
+    #[test]
+    fn test_batch_capacity_event_when_batch_crosses_threshold() {
+        let (env, admin, client) = setup();
+        let threshold = MAX_WATCHERS * CAPACITY_WARN_PERCENT / 100;
+        let batch_size = MAX_BATCH_SIZE;
+        let batches = threshold / batch_size;
+        let make_batch = |env: &Env| {
+            let mut batch: Vec<Address> = vec![env];
+            for _ in 0..batch_size {
+                batch.push_back(Address::generate(env));
+            }
+            batch
+        };
+        for _ in 0..batches - 1 {
+            client.batch_register_watchers(&admin, &make_batch(&env));
+        }
+        // Count is threshold - batch_size: below the threshold, no event.
+        assert!(capacity_event_data(&env).is_none());
+
+        client.batch_register_watchers(&admin, &make_batch(&env));
+        // Read the event before any other contract call resets the buffer.
+        assert_eq!(capacity_event_data(&env), Some((threshold, MAX_WATCHERS)));
+        assert_eq!(client.get_watcher_count(), threshold);
     }
 
     // 25. get_watcher_count decrements correctly after remove_watcher
