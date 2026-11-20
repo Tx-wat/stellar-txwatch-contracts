@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, contracterror, Address, String, Vec};
+use soroban_sdk::{contracttype, Address, String, Vec};
 
 /// Maximum number of items accepted by any batched entrypoint, including
 /// `batch_register_alerts` and `bulk_renew_ttl`.
@@ -15,33 +15,9 @@ pub const RATE_LIMIT_WINDOW: u32 = 100;
 
 // ── Errors ────────────────────────────────────────────────────────────────────
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum ContractError {
-    Unauthorized = 1,
-    AlertNotFound = 2,
-    AlreadyInitialized = 3,
-    NotInitialized = 4,
-    /// Returned when `confirm_webhook` is called but no rotation is pending.
-    NoPendingWebhook = 5,    LabelTooLong = 6,
-    TooManyRules = 7,
-    InvalidRuleDescriptor = 8,
-    OwnerAlertLimitExceeded = 9,
-    DuplicateAlertId = 10,
-    /// Returned when an owner exceeds [`RATE_LIMIT_COUNT`] registrations
-    /// within [`RATE_LIMIT_WINDOW`] ledgers.
-    RateLimitExceeded = 11,
-    /// Returned when the alert ID counter would overflow `u64`.
-    ///
-    /// The counter starts at 0 and increments by one per registration. In
-    /// release builds integer overflow wraps silently, so at `u64::MAX` the
-    /// next increment would wrap to 0 and overwrite alert ID 0. `next_id`
-    /// uses `checked_add` and returns this error instead of wrapping.
-    CounterOverflow = 14,
-    /// Returned when a mutating function is called while the contract is paused.
-    ContractPaused = 15,
-}
+// `ContractError` is defined once, in `lib.rs`, which is the enum the compiled
+// contract actually returns. Re-export it here so there is a single source of truth.
+pub use crate::ContractError;
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 
