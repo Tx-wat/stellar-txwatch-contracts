@@ -36,8 +36,8 @@ pub fn next_id(env: &Env) -> Result<u64, ContractError> {
 
 /// Extend the TTL of the global alert ID counter to [`DEFAULT_TTL`].
 ///
-/// Callers that keep alert data alive (e.g. [`crate::contract::renew_alert_ttl`]
-/// and [`crate::lib::bump_alert`]) **must** also call this function so that the
+/// Callers that keep alert data alive (e.g. the `bump_alert` entrypoint, see
+/// [`crate::lib::bump_alert`]) **must** also call this function so that the
 /// `NextId` counter cannot expire independently of the alert entries it tracks.
 ///
 /// If `NextId` expires while alert data is still live the next call to

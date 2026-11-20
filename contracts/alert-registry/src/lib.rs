@@ -47,6 +47,19 @@ mod pagination_boundary_tests;
 #[cfg(test)]
 mod rule_edge_tests;
 
+#[cfg(test)]
+mod removal_tests;
+
+/// Who initiated an alert removal, and therefore which event shape is emitted.
+#[derive(Clone, Copy)]
+enum Removal<'a> {
+    /// The alert owner removed their own alert. Event data: `(id, caller)`.
+    ByOwner,
+    /// An admin removed an alert owned by `owner`. Event data: `(id, admin, owner)`
+    /// so indexers can attribute the removal to both parties (#213).
+    ByAdmin { owner: &'a Address },
+}
+
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
 /// Default TTL applied to persistent storage entries on every write.
@@ -939,7 +952,7 @@ impl AlertRegistry {
             .ok_or(ContractError::AlertNotFound)?;
 
         Self::assert_owner(&config, &caller)?;
-        Self::remove_alert_record(&env, &config, config_id, &caller);
+        Self::remove_alert_record(&env, &config, config_id, &caller, Removal::ByOwner);
         Ok(())
     }
 
@@ -968,7 +981,13 @@ impl AlertRegistry {
             .ok_or(ContractError::AlertNotFound)?;
 
         let owner = config.owner.clone();
-        Self::remove_alert_record_by_admin(&env, &config, config_id, &admin, &owner);
+        Self::remove_alert_record(
+            &env,
+            &config,
+            config_id,
+            &admin,
+            Removal::ByAdmin { owner: &owner },
+        );
         Ok(())
     }
 
@@ -1690,34 +1709,16 @@ impl AlertRegistry {
         Ok(())
     }
 
-    fn remove_alert_record(env: &Env, config: &AlertConfig, config_id: u64, caller: &Address) {
-        env.storage()
-            .persistent()
-            .remove(&DataKey::Alert(config_id));
-        env.storage()
-            .persistent()
-            .remove(&DataKey::AlertActive(config_id));
-
-        Self::remove_from_owner_index(env, &config.owner, config_id);
-        Self::remove_from_contract_index(env, &config.target_contract, config_id);
-
-        env.events().publish(
-            (symbol_short!("alert"), symbol_short!("remove")),
-            (config_id, caller.clone()),
-        );
-    }
-
-    /// Like [`remove_alert_record`] but used for admin-initiated removals.
+    /// Delete an alert and all of its index entries, then emit `(alert, remove)`.
     ///
-    /// Emits `(alert, remove)` with data `(id, admin, owner)` so off-chain
-    /// indexers can tell admin-initiated removals from owner-initiated ones
-    /// and include both parties in the audit trail (fixes #213).
-    fn remove_alert_record_by_admin(
+    /// This is the single removal path shared by owner-initiated and
+    /// admin-initiated removal; `removal` selects the event payload.
+    fn remove_alert_record(
         env: &Env,
         config: &AlertConfig,
         config_id: u64,
-        admin: &Address,
-        owner: &Address,
+        caller: &Address,
+        removal: Removal,
     ) {
         env.storage()
             .persistent()
@@ -1729,12 +1730,16 @@ impl AlertRegistry {
         Self::remove_from_owner_index(env, &config.owner, config_id);
         Self::remove_from_contract_index(env, &config.target_contract, config_id);
 
-        // Include both admin and original owner so indexers can attribute the
-        // removal correctly without having to look up the alert after deletion.
-        env.events().publish(
-            (symbol_short!("alert"), symbol_short!("remove")),
-            (config_id, admin.clone(), owner.clone()),
-        );
+        match removal {
+            Removal::ByOwner => env.events().publish(
+                (symbol_short!("alert"), symbol_short!("remove")),
+                (config_id, caller.clone()),
+            ),
+            Removal::ByAdmin { owner } => env.events().publish(
+                (symbol_short!("alert"), symbol_short!("remove")),
+                (config_id, caller.clone(), owner.clone()),
+            ),
+        }
     }
 
     /// Atomically read and increment the global alert ID counter.
