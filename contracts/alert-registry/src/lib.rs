@@ -47,6 +47,12 @@ mod pagination_boundary_tests;
 #[cfg(test)]
 mod rule_edge_tests;
 
+#[cfg(test)]
+mod alert_summary_tests;
+
+#[cfg(test)]
+mod webhook_note_tests;
+
 // ── TTL constants ─────────────────────────────────────────────────────────────
 
 /// Default TTL applied to persistent storage entries on every write.
@@ -144,6 +150,18 @@ pub enum ContractError {
 /// Stored under [`DataKey::Alert`] with a default TTL of [`DEFAULT_TTL`] ledgers
 /// (~7 days). Use [`AlertRegistry::bump_alert`] to extend up to [`MAX_TTL`].
 /// See `docs/ttl.md` for expiry details.
+/// Alert counts for one owner, returned by [`AlertRegistry::get_alert_summary`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AlertSummary {
+    /// Global monotonic count of alerts ever registered (see `get_alert_count`).
+    pub total: u64,
+    /// Live alerts owned by the queried owner whose `active` flag is `true`.
+    pub active: u32,
+    /// Live alerts owned by the queried owner whose `active` flag is `false`.
+    pub inactive: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct AlertConfig {
@@ -773,15 +791,27 @@ impl AlertRegistry {
     /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
     /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     ///
+    /// `note` is an optional free-form reason for the rotation (max 128 bytes,
+    /// same rule as the alert label). It is **not** stored on-chain; it is only
+    /// carried in the emitted event so operators have an audit trail.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::LabelTooLong`] if `note` exceeds 128 bytes.
+    ///
     /// # Events
-    /// Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+    /// Emits `(Symbol("alert"), Symbol("wh_prop"))` with data
+    /// `(id: u64, caller: Address, note: Option<String>)`.
     pub fn propose_webhook(
         env: Env,
         caller: Address,
         config_id: u64,
         new_webhook_hash: String,
+        note: Option<String>,
     ) -> Result<(), ContractError> {
         caller.require_auth();
+        if let Some(n) = &note {
+            Self::validate_label(n)?;
+        }
 
         let mut config: AlertConfig = env
             .storage()
@@ -803,7 +833,7 @@ impl AlertRegistry {
 
         env.events().publish(
             (symbol_short!("alert"), symbol_short!("wh_prop")),
-            (config_id, caller),
+            (config_id, caller, note),
         );
 
         Ok(())
@@ -1514,6 +1544,37 @@ impl AlertRegistry {
         count
     }
 
+    /// Return the alert counts for `owner` in a single call (#419).
+    ///
+    /// * `total` is the global monotonic counter, identical to [`get_alert_count`].
+    /// * `active` and `inactive` count the owner's live alerts (entries that have
+    ///   not been removed or expired), split by their `active` flag.
+    pub fn get_alert_summary(env: Env, owner: Address) -> AlertSummary {
+        let total = Self::get_alert_count(env.clone());
+        let ids = Self::owner_index(&env, &owner);
+        let mut active: u32 = 0;
+        let mut inactive: u32 = 0;
+        for i in 0..ids.len() {
+            let id = ids.get(i).unwrap();
+            if let Some(config) = env
+                .storage()
+                .persistent()
+                .get::<_, AlertConfig>(&DataKey::Alert(id))
+            {
+                if config.active {
+                    active += 1;
+                } else {
+                    inactive += 1;
+                }
+            }
+        }
+        AlertSummary {
+            total,
+            active,
+            inactive,
+        }
+    }
+
     // ── Internal helpers ─────────────────────────────────────────────────────
 
     /// Reject mutating calls while the contract is paused.
@@ -1926,7 +1987,7 @@ impl AlertRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger as _}, vec, Env, String};
+    use soroban_sdk::{testutils::{Address as _, Events as _, Ledger as _}, vec, Env, String};
 
     fn setup() -> (Env, AlertRegistryClient<'static>) {
         let env = Env::default();
@@ -2201,7 +2262,7 @@ mod tests {
     fn test_old_admin_rejected_after_transfer() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
 
         // first transfer succeeds
@@ -2296,7 +2357,7 @@ mod tests {
         let (env, client) = setup();
         let querier = Address::generate(&env);
         let target = Address::generate(&env);
-        let result = client.get_alerts_for_contract(&querier, &target).unwrap();
+        let result = client.get_alerts_for_contract(&querier, &target);
         assert_eq!(result.len(), 0);
     }
 
@@ -2306,7 +2367,7 @@ mod tests {
         let (env, client) = setup();
         let owner = Address::generate(&env);
         let querier = Address::generate(&env);
-        assert_eq!(client.get_alerts_by_owner(&querier, &owner).unwrap().len(), 0);
+        assert_eq!(client.get_alerts_by_owner(&querier, &owner).len(), 0);
     }
 
     // 8. Index queries — get_alerts_for_contract and get_alerts_by_owner
@@ -2321,11 +2382,11 @@ mod tests {
         client.register_alert(&owner, &target, &str(&env, "A2"), &hash64(&env), &vec![&env, str(&env, "rule:transfer")], &None);
 
         assert_eq!(
-            client.get_alerts_for_contract(&querier, &target).unwrap().len(),
+            client.get_alerts_for_contract(&querier, &target).len(),
             2
         );
         assert_eq!(
-            client.get_alerts_by_owner(&querier, &owner).unwrap().len(),
+            client.get_alerts_by_owner(&querier, &owner).len(),
             2
         );
     }
@@ -2373,12 +2434,12 @@ mod tests {
 
         let page = client
             .get_contract_alerts_paginated(&querier, &target, &0u32, &3u32)
-            .unwrap();
+            ;
         assert_eq!(page.len(), 3);
 
         let page2 = client
             .get_alerts_by_owner_paginated(&querier, &owner, &3u32, &10u32)
-            .unwrap();
+            ;
         assert_eq!(page2.len(), 2);
     }
 
@@ -2403,7 +2464,7 @@ mod tests {
 
         // No registry set — stranger can still query
         assert_eq!(
-            client.get_alerts_for_contract(&stranger, &target).unwrap().len(),
+            client.get_alerts_for_contract(&stranger, &target).len(),
             1
         );
     }
@@ -2573,7 +2634,7 @@ mod tests {
         let attacker = Address::generate(&env);
         let fake_registry = Address::generate(&env);
 
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
 
         assert_eq!(
             client
@@ -2620,7 +2681,7 @@ mod tests {
 
         client
             .update_alert(&owner, &id, &vec![&env, str(&env, "rule:mint")], &true)
-            .unwrap();
+            ;
 
         let after = client.get_alert(&id).unwrap();
         assert!(
@@ -2809,7 +2870,7 @@ mod tests {
         // Deactivate the second alert
         client.update_alert(&owner, &_id2, &vec![&env, str(&env, "rule:mint")], &false);
 
-        let all = client.get_alerts_for_contract(&owner, &target).unwrap();
+        let all = client.get_alerts_for_contract(&owner, &target);
         assert_eq!(all.len(), 2);
 
         let active = client.get_active_alerts_for_contract(&target);
@@ -2881,10 +2942,10 @@ mod tests {
     fn test_transfer_admin_emits_event() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
 
-        client.transfer_admin(&admin, &new_admin).unwrap();
+        client.transfer_admin(&admin, &new_admin);
 
         // Verify at least one event was published during the transfer
         assert!(!env.events().all().is_empty());
@@ -2892,15 +2953,15 @@ mod tests {
 
     // 19. old admin cannot act after transfer_admin
     #[test]
-    fn test_old_admin_rejected_after_transfer() {
+    fn test_old_admin_rejected_after_remove_alert() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.transfer_admin(&admin, &new_admin).unwrap();
+        client.transfer_admin(&admin, &new_admin);
 
         let id = client.register_alert(
             &owner,
@@ -3116,7 +3177,7 @@ mod tests {
         let client = AlertRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         env.mock_all_auths();
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let new_admin = Address::generate(&env);
         env.set_auths(&[]);
         client.transfer_admin(&admin, &new_admin);
@@ -3130,7 +3191,7 @@ mod tests {
         let client = AlertRegistryClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
         env.mock_all_auths();
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         env.set_auths(&[]);
         client.set_per_owner_alert_limit(&admin, &5u32);
     }
@@ -3145,7 +3206,7 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
         env.mock_all_auths();
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let id = client.register_alert(
             &owner,
             &target,
@@ -3196,6 +3257,7 @@ mod tests {
                 &str(&env, "A"),
                 &hash64(&env),
                 &vec![&env, str(&env, "rule:invoke"), str(&env, "rule:all")],
+                &None,
             ));
         }
         client.remove_alert(&owner, &ids.get(1).unwrap());
@@ -3227,8 +3289,8 @@ mod tests {
         assert_eq!(cfg.target_contract, new_target);
 
         // indexes updated correctly
-        assert_eq!(client.get_alerts_for_contract(&owner, &old_target).unwrap().len(), 0);
-        assert_eq!(client.get_alerts_for_contract(&owner, &new_target).unwrap().len(), 1);
+        assert_eq!(client.get_alerts_for_contract(&owner, &old_target).len(), 0);
+        assert_eq!(client.get_alerts_for_contract(&owner, &new_target).len(), 1);
     }
 
     // #33 — update_target_contract unauthorized
@@ -3517,15 +3579,15 @@ mod tests {
         }
 
         // first page
-        let page1 = client.get_alerts_by_owner_paginated(&querier, &owner, &0u32, &3u32).unwrap();
+        let page1 = client.get_alerts_by_owner_paginated(&querier, &owner, &0u32, &3u32);
         assert_eq!(page1.len(), 3);
 
         // second page
-        let page2 = client.get_alerts_by_owner_paginated(&querier, &owner, &3u32, &3u32).unwrap();
+        let page2 = client.get_alerts_by_owner_paginated(&querier, &owner, &3u32, &3u32);
         assert_eq!(page2.len(), 2);
 
         // offset beyond length returns empty
-        let empty = client.get_alerts_by_owner_paginated(&querier, &owner, &10u32, &3u32).unwrap();
+        let empty = client.get_alerts_by_owner_paginated(&querier, &owner, &10u32, &3u32);
         assert_eq!(empty.len(), 0);
     }
 
@@ -3541,7 +3603,7 @@ mod tests {
             client.register_alert(&owner, &target, &str(&env, label), &hash64(&env), &vec![&env, str(&env, "rule:transfer")], &None);
         }
 
-        let page = client.get_contract_alerts_paginated(&querier, &target, &1u32, &2u32).unwrap();
+        let page = client.get_contract_alerts_paginated(&querier, &target, &1u32, &2u32);
         assert_eq!(page.len(), 2);
     }
 
@@ -3669,13 +3731,13 @@ mod tests {
             &None,
         );
 
-        assert_eq!(client.get_alerts_for_contract(&owner_a, &target).unwrap().len(), 2);
+        assert_eq!(client.get_alerts_for_contract(&owner_a, &target).len(), 2);
 
-        let alerts_a = client.get_alerts_by_owner(&owner_a, &owner_a).unwrap();
+        let alerts_a = client.get_alerts_by_owner(&owner_a, &owner_a);
         assert_eq!(alerts_a.len(), 1);
         assert_eq!(alerts_a.get(0).unwrap().owner, owner_a);
 
-        let alerts_b = client.get_alerts_by_owner(&owner_b, &owner_b).unwrap();
+        let alerts_b = client.get_alerts_by_owner(&owner_b, &owner_b);
         assert_eq!(alerts_b.len(), 1);
         assert_eq!(alerts_b.get(0).unwrap().owner, owner_b);
     }
@@ -3730,14 +3792,14 @@ mod tests {
         );
 
         // Request a TTL above the protocol maximum
-        client.bump_alert(&id, &u32::MAX).unwrap();
+        client.bump_alert(&id, &u32::MAX);
 
         // The emitted event should carry the clamped effective TTL
         let events = env.events().all();
         let bump_event = events.iter().find(|(_, topics, _)| {
             topics.len() == 2
-                && topics.get(0).unwrap() == soroban_sdk::symbol_short!("alert").into()
-                && topics.get(1).unwrap() == soroban_sdk::symbol_short!("bump").into()
+                && topics.get(0).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(soroban_sdk::symbol_short!("alert")), &env))
+                && topics.get(1).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(soroban_sdk::symbol_short!("bump")), &env))
         });
         assert!(bump_event.is_some(), "expected an alert.bump event");
 
@@ -3767,13 +3829,13 @@ mod tests {
         );
 
         let requested_ttl: u32 = 120_960; // ~7 days, well below MAX_TTL
-        client.bump_alert(&id, &requested_ttl).unwrap();
+        client.bump_alert(&id, &requested_ttl);
 
         let events = env.events().all();
         let bump_event = events.iter().find(|(_, topics, _)| {
             topics.len() == 2
-                && topics.get(0).unwrap() == soroban_sdk::symbol_short!("alert").into()
-                && topics.get(1).unwrap() == soroban_sdk::symbol_short!("bump").into()
+                && topics.get(0).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(soroban_sdk::symbol_short!("alert")), &env))
+                && topics.get(1).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(soroban_sdk::symbol_short!("bump")), &env))
         });
         assert!(bump_event.is_some());
 
@@ -3801,15 +3863,15 @@ mod tests {
         );
 
         let ttl: u32 = 17_280;
-        client.bump_alert(&id, &ttl).unwrap();
+        client.bump_alert(&id, &ttl);
 
         let events = env.events().all();
         let bump_event = events
             .iter()
             .find(|(_, topics, _)| {
                 topics.len() == 2
-                    && topics.get(0).unwrap() == symbol_short!("alert").into()
-                    && topics.get(1).unwrap() == symbol_short!("bump").into()
+                    && topics.get(0).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("alert")), &env))
+                    && topics.get(1).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("bump")), &env))
             })
             .expect("alert.bump event must be emitted");
 
@@ -3838,7 +3900,7 @@ mod tests {
         );
 
         let before = client.get_alert(&id).unwrap();
-        client.bump_alert(&id, &17_280u32).unwrap();
+        client.bump_alert(&id, &17_280u32);
         let after = client.get_alert(&id).unwrap();
 
         // All fields must be identical after a bump
@@ -3894,9 +3956,9 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         // Explicitly set limit to 0 (no cap).
-        client.set_per_owner_alert_limit(&admin, &0u32).unwrap();
+        client.set_per_owner_alert_limit(&admin, &0u32);
 
         // Should be able to register multiple alerts without hitting any cap.
         for _ in 0..5 {
@@ -3907,7 +3969,7 @@ mod tests {
                 &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
                 &vec![&env],
                 &None,
-            ).unwrap();
+            );
         }
         assert_eq!(client.get_active_alert_count(&owner), 5u32);
     }
@@ -3920,8 +3982,8 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.initialize(&admin).unwrap();
-        client.set_per_owner_alert_limit(&admin, &2u32).unwrap();
+        client.initialize(&admin);
+        client.set_per_owner_alert_limit(&admin, &2u32);
 
         // First two should succeed.
         client.register_alert(
@@ -3929,13 +3991,13 @@ mod tests {
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
         client.register_alert(
             &owner, &target, &str(&env, "B"),
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
 
         // Third should be rejected.
         let res = client.try_register_alert(
@@ -3955,8 +4017,8 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.initialize(&admin).unwrap();
-        client.set_per_owner_alert_limit(&admin, &1u32).unwrap();
+        client.initialize(&admin);
+        client.set_per_owner_alert_limit(&admin, &1u32);
 
         // First succeeds, second fails.
         client.register_alert(
@@ -3964,7 +4026,7 @@ mod tests {
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
         assert!(client.try_register_alert(
             &owner, &target, &str(&env, "B"),
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
@@ -3973,13 +4035,13 @@ mod tests {
         ).unwrap_err().is_ok());
 
         // Clear the limit — registrations resume.
-        client.set_per_owner_alert_limit(&admin, &0u32).unwrap();
+        client.set_per_owner_alert_limit(&admin, &0u32);
         client.register_alert(
             &owner, &target, &str(&env, "C"),
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
     }
 
     // ── Issue #212: bump_alert extends the NextId counter TTL ────────────────
@@ -3999,7 +4061,7 @@ mod tests {
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
 
         // Counter should be 1 after first registration.
         let count_before: u64 = env
@@ -4011,7 +4073,7 @@ mod tests {
 
         // Bump several times without new registrations.
         for _ in 0..5 {
-            client.bump_alert(&id, &DEFAULT_TTL).unwrap();
+            client.bump_alert(&id, &DEFAULT_TTL);
         }
 
         // Counter value must be unchanged — bumping must not reset or corrupt it.
@@ -4028,7 +4090,7 @@ mod tests {
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
         assert_eq!(id2, 1u64, "Second registration must receive ID 1, not 0");
     }
 
@@ -4048,16 +4110,16 @@ mod tests {
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
 
         let events_before = env.events().all().len();
-        client.remove_alert(&owner, &id).unwrap();
+        client.remove_alert(&owner, &id);
 
         let events = env.events().all();
-        let remove_event = events.iter().skip(events_before).find(|(_, topics, _)| {
+        let remove_event = events.iter().skip(events_before as usize).find(|(_, topics, _)| {
             topics.len() == 2
-                && topics.get(0).unwrap() == symbol_short!("alert").into()
-                && topics.get(1).unwrap() == symbol_short!("remove").into()
+                && topics.get(0).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("alert")), &env))
+                && topics.get(1).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("remove")), &env))
         }).expect("alert.remove event must be emitted");
 
         // Owner-initiated: data is (id: u64, caller: Address)
@@ -4078,22 +4140,22 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.initialize(&admin).unwrap();
+        client.initialize(&admin);
         let id = client.register_alert(
             &owner, &target, &str(&env, "Alert"),
             &str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env],
             &None,
-        ).unwrap();
+        );
 
         let events_before = env.events().all().len();
-        client.remove_alert_by_admin(&admin, &id).unwrap();
+        client.remove_alert_by_admin(&admin, &id);
 
         let events = env.events().all();
-        let remove_event = events.iter().skip(events_before).find(|(_, topics, _)| {
+        let remove_event = events.iter().skip(events_before as usize).find(|(_, topics, _)| {
             topics.len() == 2
-                && topics.get(0).unwrap() == symbol_short!("alert").into()
-                && topics.get(1).unwrap() == symbol_short!("remove").into()
+                && topics.get(0).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("alert")), &env))
+                && topics.get(1).unwrap().shallow_eq(&soroban_sdk::IntoVal::<soroban_sdk::Env, soroban_sdk::Val>::into_val(&(symbol_short!("remove")), &env))
         }).expect("alert.remove event must be emitted for admin removal");
 
         // Admin-initiated: data is (id: u64, admin: Address, owner: Address)

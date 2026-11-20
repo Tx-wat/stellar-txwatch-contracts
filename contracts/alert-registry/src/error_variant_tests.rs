@@ -37,7 +37,10 @@ fn already_initialized_on_second_initialize() {
 fn not_initialized_before_initialize() {
     let (_env, client) = setup();
     let result = client.try_get_admin();
-    assert_eq!(result, Err(Ok(ContractError::NotInitialized)));
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        soroban_sdk::Error::from_contract_error(ContractError::NotInitialized as u32)
+    );
 }
 
 #[test]

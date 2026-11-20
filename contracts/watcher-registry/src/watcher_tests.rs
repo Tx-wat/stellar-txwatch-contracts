@@ -67,12 +67,12 @@ fn transfer_admin_replaces_the_admin_set() {
 fn register_watcher_is_idempotent_and_admin_only() {
     let (env, client, admin) = setup();
     let watcher = Address::generate(&env);
-    client.register_watcher(&admin, &watcher, &None);
-    client.register_watcher(&admin, &watcher, &None);
+    client.register_watcher(&admin, &watcher);
+    client.register_watcher(&admin, &watcher);
     assert_eq!(client.get_watcher_count(), 1);
 
     let stranger = Address::generate(&env);
-    assert_eq!(client.try_register_watcher(&stranger, &watcher, &None), Err(Ok(ContractError::Unauthorized)));
+    assert_eq!(client.try_register_watcher(&stranger, &watcher), Err(Ok(ContractError::Unauthorized)));
 }
 
 #[test]
@@ -85,8 +85,8 @@ fn remove_unknown_watcher_returns_not_found() {
 #[test]
 fn clear_all_watchers_empties_the_list() {
     let (env, client, admin) = setup();
-    client.register_watcher(&admin, &Address::generate(&env), &None);
-    client.register_watcher(&admin, &Address::generate(&env), &None);
+    client.register_watcher(&admin, &Address::generate(&env));
+    client.register_watcher(&admin, &Address::generate(&env));
     client.clear_all_watchers(&admin);
     assert_eq!(client.get_watcher_count(), 0);
 }
@@ -96,7 +96,7 @@ fn is_authorized_is_true_only_for_registered_watchers() {
     let (env, client, admin) = setup();
     let watcher = Address::generate(&env);
     let other = Address::generate(&env);
-    client.register_watcher(&admin, &watcher, &None);
+    client.register_watcher(&admin, &watcher);
     assert!(client.is_authorized(&watcher));
     assert!(!client.is_authorized(&other));
 }

@@ -390,12 +390,13 @@ Calling `propose_webhook` again before confirming overwrites the previous pendin
 | `caller` | `Address` | Must be the alert owner |
 | `config_id` | `u64` | ID of the alert to update |
 | `new_webhook_hash` | `String` | SHA-256 hex digest of the new webhook URL |
+| `note` | `Option<String>` | Optional reason for the rotation, max 128 bytes. Emitted in the event only; never stored on-chain (#420) |
 
 **Returns:** `Result<(), ContractError>`
 
-**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner; `LabelTooLong` if `note` exceeds 128 bytes.
 
-**Events:** Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+**Events:** Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address, note: Option<String>)`.
 
 ---
 

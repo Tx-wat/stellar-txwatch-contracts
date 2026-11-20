@@ -31,6 +31,7 @@ const result = await contract.register_alert({
   label: 'My Alert',
   webhook_hash: 'sha256_hash_of_webhook_url',
   rules: ['rule:transfer', 'rule:mint'],
+  tags: ['treasury', 'high-value'], // optional; max 10 tags, 32 bytes each
 }, {
   keypair,
 });
@@ -59,7 +60,8 @@ console.log('Paginated alerts:', paginatedAlerts);
 The bindings provide TypeScript types and methods for all AlertRegistry contract functions:
 
 ### Write Methods (require authentication)
-- `register_alert` - Register a new alert configuration
+- `register_alert` - Register a new alert configuration (optional `tags`)
+- `update_tags` - Replace the tags of an alert (owner only; pass `undefined` to clear)
 - `update_alert` - Update rules and active status
 - `update_webhook` - Update webhook hash
 - `remove_alert` - Remove an alert
@@ -78,6 +80,27 @@ The bindings provide TypeScript types and methods for all AlertRegistry contract
 - `get_active_alert_count` - Get number of active alerts for an owner
 - `get_admin` - Get the current admin address
 - `get_per_owner_alert_limit` - Get the per-owner alert limit
+
+## Tags
+
+`AlertConfig` carries an optional `tags` field: an array of up to 10 strings, each at
+most 32 bytes, for client-side categorization. Pass them to `register_alert`, or replace
+them later with `update_tags`. Only the owner may change an alert's tags.
+
+```typescript
+// Read the tags back from a stored alert
+const { result: alert } = await contract.get_alert({ config_id: id });
+console.log(alert?.tags); // string[] | undefined
+
+// Replace the tags on an existing alert
+await (await contract.update_tags({
+  caller: keypair.publicKey(),
+  config_id: id,
+  tags: ['treasury'],
+})).signAndSend();
+```
+
+Going over the limits is refused with `TooManyTags` or `TagTooLong`.
 
 ## Building from Source
 

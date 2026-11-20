@@ -109,7 +109,7 @@ fn limit_above_max_batch_size_is_clamped() {
 
     // Register MAX_BATCH_SIZE + 5 alerts so there is more data than the cap.
     for i in 0..(MAX_BATCH_SIZE + 5) {
-        let label = String::from_str(&env, &format!("alert{i}"));
+        let label = String::from_str(&env, if i % 2 == 0 { "alert-even" } else { "alert-odd" });
         client.register_alert(
             &owner,
             &target,
