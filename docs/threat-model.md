@@ -104,6 +104,39 @@ The `AlertRegistry` contract stores per-owner alert configurations (webhook hash
 
 ---
 
+## WatcherRegistry Threat Model
+
+This section covers threats specific to `WatcherRegistry`. Each threat lists the attack, the contract behavior, and the residual risk.
+
+### W1. Unauthorized watcher registration
+
+**Vector:** An attacker calls `register_watcher`, `batch_register_watchers`, or `replace_watcher` to add their own address to the watcher set.
+**Contract behavior:** Each of these functions requires admin authorization through `require_auth()`. A call without a valid admin signature is rejected before any state changes.
+**Residual risk:** None at the contract level, as long as the admin key is intact. An attacker who holds the admin key is covered by W2.
+
+### W2. Admin key compromise
+
+**Vector:** The admin key is stolen. The attacker can then register arbitrary watchers, call `clear_all_watchers`, `transfer_admin`, or `add_admin`, or pause the registry.
+**Contract behavior:** The contract does not limit what the admin can do. Multi-admin mode (`add_admin`) does not change this, because any admin has full authority. `remove_admin` refuses to remove the last admin (`LastAdmin`), so the registry is never left without one.
+**Mitigation outside contract scope:** Hardware wallets or multi-sig admin accounts, plus a documented key-rotation procedure. Monitor `admin` events (`add`, `remove`, `transfer`) so an unexpected change is noticed quickly.
+**Residual risk:** High. A single compromised admin key gives full control of the watcher set.
+
+### W3. Watcher list exhaustion (`MAX_WATCHERS`)
+
+**Vector:** An attacker with admin access (W2) or a runaway admin script fills the watcher list up to `MAX_WATCHERS` (1,000). Once full, further `register_watcher` calls return `WatcherLimitExceeded`. `batch_register_watchers` checks the combined total the same way.
+**Contract behavior:** The cap is enforced on every registration path, so the list cannot grow beyond 1,000 entries. Reads and `is_authorized` are not affected.
+**Operational effect:** Legitimate watchers cannot be added until existing entries are removed. Removing a stale watcher with `remove_watcher` frees a slot.
+**Mitigation:** Watchers should renew (`renew_watcher`) before expiry, and operators should remove decommissioned watchers promptly. Alert when `get_watcher_count` approaches the cap.
+**Residual risk:** Medium. The cap bounds storage cost, but a full list blocks onboarding.
+
+### W4. Paused-registry denial of service
+
+**Vector:** The admin calls `set_paused(true)`, either by mistake or after a compromise (W2).
+**Contract behavior:** While paused, every state-changing function returns `ContractPaused`. These include `register_watcher`, `remove_watcher`, `replace_watcher`, `batch_register_watchers`, `renew_watcher`, `clear_all_watchers`, `add_admin`, `remove_admin`, and `transfer_admin`. Read functions and `is_authorized` / `is_watcher_authorized` keep working, so watchers that are already registered continue to operate.
+**Impact:** Watcher membership cannot change during a pause. A paused registry does not stop existing watchers from being authorized, but it does block emergency removal of a rogue watcher.
+**Mitigation:** Pause only with a documented reason, and unpause as soon as the incident is resolved. Keep an admin key available to unpause even when the primary admin is unavailable (see W2).
+**Residual risk:** Medium. A pause can freeze the response to an active incident, so pausing should be a deliberate, logged decision.
+
 ## Security Properties Summary
 
 | Property | Enforced by contract |

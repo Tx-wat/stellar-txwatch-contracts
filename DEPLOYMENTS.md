@@ -24,6 +24,9 @@ After running `scripts/deploy.sh`, replace the placeholder values with the print
 | RPC URL | `https://soroban-testnet.stellar.org` |
 | Network Passphrase | `Test SDF Network ; September 2015` |
 | Horizon URL | `https://horizon-testnet.stellar.org` |
+| Deploy date | _Pending next testnet deployment_ |
+| Rust toolchain | `1.88.0` (from `rust-toolchain.toml`) |
+| Soroban SDK | `23.0.0` (from `Cargo.toml`) |
 
 > Testnet resets periodically. Re-deploy with `bash scripts/deploy.sh` and update the addresses above after each reset.
 

@@ -80,6 +80,37 @@ To rotate a webhook URL, use `update_webhook` with the new SHA-256 hex digest an
 
 ---
 
+## Webhook Rotation
+
+Rotating an alert's webhook uses a two-step flow. The new hash is staged in `AlertConfig.pending_webhook_hash` first, and the live `webhook_hash` changes only when the owner confirms. This avoids a window where the old webhook is removed before the new one is confirmed by the off-chain watcher.
+
+### Lifecycle of `pending_webhook_hash`
+
+| State | `webhook_hash` | `pending_webhook_hash` | Set by |
+|---|---|---|---|
+| Registered, no rotation in progress | `H1` | `None` | `register_alert` |
+| Rotation proposed | `H1` (unchanged) | `Some(H2)` | `propose_webhook` |
+| Proposal overwritten | `H1` (unchanged) | `Some(H3)` | second `propose_webhook` |
+| Rotation confirmed | `H3` | `None` | `confirm_webhook` |
+
+Step by step:
+
+1. **Propose.** The owner calls `propose_webhook(caller, config_id, new_webhook_hash)`. The contract stores the hash in `pending_webhook_hash`, updates `updated_at`, and emits `(alert, wh_prop)` with data `(config_id, caller)`. The live `webhook_hash` is not changed, so the watcher keeps posting to the current URL.
+2. **Overwrite (optional).** A second `propose_webhook` replaces the pending value. Only the most recent proposal is kept, and the earlier one is lost.
+3. **Confirm.** The owner calls `confirm_webhook(caller, config_id)`. The contract takes the pending value, writes it to `webhook_hash`, clears `pending_webhook_hash`, and emits `(alert, webhook)` with data `(config_id, caller)`.
+
+### Edge cases
+
+- **Confirm with nothing pending** returns `NoPendingWebhook`. The stored state does not change.
+- **Propose or confirm by a non-owner** returns `Unauthorized`. The owner check runs after `require_auth()`.
+- **Unknown alert ID** returns `AlertNotFound` for both functions.
+- **Direct update bypasses the flow.** `update_webhook` sets `webhook_hash` immediately and does **not** clear `pending_webhook_hash`. A pending proposal can therefore survive a direct update, and a later `confirm_webhook` will overwrite the directly-set hash. Use one path per rotation, not both.
+- **No length check on propose.** `propose_webhook` stores the value as given. `update_webhook` requires exactly 64 characters. Validate the hash off-chain (see [Webhook Hash Scheme](#webhook-hash-scheme)) before proposing, because an invalid value is only caught when it is confirmed and used.
+
+### Watcher behavior
+
+Watchers should treat `webhook_hash` as the only live value. Ignore `pending_webhook_hash` for delivery. Switch delivery to the new hash when the `alert.webhook` event for that `config_id` is seen, or when a re-read of the alert shows a changed `webhook_hash`.
+
 ## Rule descriptor format
 
 The `rules` field is a `Vec<String>` containing serialized rule descriptors. Each descriptor is a single string in the format `rule:<prefix>`, where `<prefix>` denotes the event or condition to watch for.
