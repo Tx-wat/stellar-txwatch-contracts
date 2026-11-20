@@ -56,6 +56,12 @@ jobs:
       - name: Integration tests
         run: cargo test -p integration-tests
 
+      # Issue #482 — verify TypeScript bindings compile with no errors.
+      # Uses npm install (no lockfile is committed, so npm ci would fail).
+      - name: TypeScript bindings type-check (watcher-registry)
+        working-directory: bindings/watcher-registry
+        run: npm install --no-audit --no-fund && npx tsc --noEmit -p tsconfig.json
+
       # Issue #100 / #289 — Clippy lint check (deny warnings)
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

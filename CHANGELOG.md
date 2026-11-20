@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`@tx-wat/alert-registry-bindings` bumped to 0.2.0** (from 0.1.0). The `tags` field on `AlertConfig`, the new
+  `register_alert` argument and the multi-admin changes are breaking for TypeScript consumers, so the minor version
+  is bumped (pre-1.0 semver). Regenerate bindings and update consumers before upgrading (#481).
 - **Breaking:** `WatcherRegistry::remove_watcher` now returns `ContractError::WatcherNotFound` when the address is not registered, instead of `Ok(())` (#231).
 - `WatcherRegistry::register_watcher` enforces `MAX_WATCHERS` (100) and returns the new `ContractError::WatcherLimitExceeded` (#232). See `docs/watcher-registry.md`.
 - `clear_all_watchers` resets the watcher count to 0; covered by a unit test (#230).

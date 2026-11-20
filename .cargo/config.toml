@@ -1,0 +1,5 @@
+# Default build target for the workspace (issue #479).
+# Lets `cargo build --release` produce a deployable WASM artifact without
+# passing `--target wasm32-unknown-unknown` each time.
+[build]
+target = "wasm32-unknown-unknown"

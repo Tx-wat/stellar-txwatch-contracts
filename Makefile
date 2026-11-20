@@ -1,4 +1,4 @@
-.PHONY: help build test lint fmt fmt-check doc deploy-testnet bindings clean verify
+.PHONY: help build test lint fmt fmt-check check doc deploy-testnet bindings clean verify
 
 # Print available targets with descriptions.
 help:
@@ -8,6 +8,7 @@ help:
 	@echo "  lint           Run clippy with warnings as errors (cargo clippy --all-targets -- -D warnings)"
 	@echo "  fmt            Format all code (cargo fmt --all)"
 	@echo "  fmt-check      Check formatting without modifying files (cargo fmt --all -- --check)"
+	@echo "  check          Run fmt-check, clippy and tests in sequence (pre-PR check)"
 	@echo "  doc            Build and open documentation (cargo doc --no-deps --open)"
 	@echo "  deploy-testnet Deploy the contract to testnet (scripts/deploy.sh)"
 	@echo "  bindings       Generate TypeScript bindings for WatcherRegistry"
@@ -33,6 +34,12 @@ fmt:
 # Check formatting without modifying files.
 fmt-check:
 	cargo fmt --all -- --check
+
+# Run formatting check, clippy (warnings as errors) and tests in sequence.
+check:
+	cargo fmt --all -- --check
+	cargo clippy -- -D warnings
+	cargo test --all
 
 # Build and open the crate documentation.
 doc:
