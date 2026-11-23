@@ -1,7 +1,7 @@
 #![no_std]
 #![warn(clippy::pedantic)]
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, symbol_short, vec, Address, Env, String, Vec,
+    contract, contractimpl, contracttype, contracterror, panic_with_error, symbol_short, vec, Address, Env, String, Vec,
 };
 
 // ── Errors ────────────────────────────────────────────────────────────────────
@@ -69,9 +69,13 @@ pub enum ContractError {
     InvalidRuleDescriptor = 9,
     OwnerAlertLimitExceeded = 10,
     DuplicateAlertId = 11,
+    /// Returned when the alert ID counter would overflow `u64`.
+    CounterOverflow = 12,
     /// A storage write failed, for example because an entry exceeds the protocol size limit.
     /// Returned as a typed error so callers can tell storage saturation from a bug (#251).
     StorageError = 13,
+    /// Returned when `confirm_webhook` is called but no rotation is in progress.
+    NoPendingWebhook = 14,
 }
 
 // ── Data types ───────────────────────────────────────────────────────────────
@@ -100,6 +104,11 @@ pub struct AlertConfig {
     pub updated_at: u64,
     /// Whether the alert is currently active.
     pub active: bool,
+    /// Pending webhook hash proposed via `propose_webhook` but not yet confirmed.
+    ///
+    /// `None` means no rotation is in progress. Once the owner calls
+    /// `confirm_webhook`, this value is promoted to `webhook_hash` and cleared.
+    pub pending_webhook_hash: Option<String>,
 }
 
 // ── Contract ─────────────────────────────────────────────────────────────────
@@ -279,6 +288,7 @@ impl AlertRegistry {
             created_at: now,
             updated_at: now,
             active: true,
+            pending_webhook_hash: None,
         };
 
         env.storage().persistent().set(&DataKey::Alert(id), &config);
@@ -321,7 +331,7 @@ impl AlertRegistry {
             .ok_or(ContractError::AlertNotFound)?;
 
         Self::assert_owner(&config, &caller)?;
-        Self::validate_rules(&env, &rules);
+        Self::validate_rules(&env, &rules)?;
 
         config.rules = rules;
         config.active = active;
@@ -360,12 +370,21 @@ impl AlertRegistry {
     /// # Auth
     /// Requires a valid Stellar auth signature from `caller`, who must also be
     /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::InvalidWebhookHash`] if `webhook_hash` is not exactly 64 characters.
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
     pub fn update_webhook(
         env: Env,
         caller: Address,
         config_id: u64,
         webhook_hash: String,
     ) -> Result<(), ContractError> {
+        if webhook_hash.len() != 64 {
+            return Err(ContractError::InvalidWebhookHash);
+        }
+
         caller.require_auth();
 
         let mut config: AlertConfig = env
@@ -394,8 +413,162 @@ impl AlertRegistry {
 
         env.events().publish(
             (symbol_short!("alert"), symbol_short!("update")),
-            (config_id, caller, active),
+            (config_id, caller),
         );
+
+        Ok(())
+    }
+
+    /// Propose a new webhook hash for an existing alert (step 1 of 2).
+    ///
+    /// The new hash is stored in `pending_webhook_hash` and does **not** replace
+    /// the live `webhook_hash` yet. The owner must call [`confirm_webhook`] to
+    /// complete the rotation. Calling `propose_webhook` again before confirming
+    /// overwrites the previous pending hash, allowing the owner to correct a mistake.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::InvalidWebhookHash`] if `new_webhook_hash` is not exactly 64 characters.
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    ///
+    /// # Events
+    /// Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+    pub fn propose_webhook(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+        new_webhook_hash: String,
+    ) -> Result<(), ContractError> {
+        if new_webhook_hash.len() != 64 {
+            return Err(ContractError::InvalidWebhookHash);
+        }
+
+        caller.require_auth();
+
+        let mut config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .ok_or(ContractError::AlertNotFound)?;
+
+        Self::assert_owner(&config, &caller)?;
+
+        config.pending_webhook_hash = Some(new_webhook_hash);
+        config.updated_at = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Alert(config_id), &config);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Alert(config_id), DEFAULT_TTL, DEFAULT_TTL);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("wh_prop")),
+            (config_id, caller),
+        );
+
+        Ok(())
+    }
+
+    /// Confirm a pending webhook hash rotation (step 2 of 2).
+    ///
+    /// Promotes `pending_webhook_hash` to `webhook_hash` and clears the pending
+    /// field. Returns [`ContractError::NoPendingWebhook`] if no rotation is in progress.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    /// Returns [`ContractError::NoPendingWebhook`] if no pending hash exists.
+    ///
+    /// # Events
+    /// Emits `(Symbol("alert"), Symbol("wh_conf"))` with data `(id: u64, caller: Address)`.
+    pub fn confirm_webhook(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let mut config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .ok_or(ContractError::AlertNotFound)?;
+
+        Self::assert_owner(&config, &caller)?;
+
+        let pending = config
+            .pending_webhook_hash
+            .take()
+            .ok_or(ContractError::NoPendingWebhook)?;
+
+        config.webhook_hash = pending;
+        config.updated_at = env.ledger().timestamp();
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Alert(config_id), &config);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Alert(config_id), DEFAULT_TTL, DEFAULT_TTL);
+
+        env.events().publish(
+            (symbol_short!("alert"), symbol_short!("wh_conf")),
+            (config_id, caller),
+        );
+
+        Ok(())
+    }
+
+    /// Extend the TTL of an alert and its index entries without modifying any data.
+    ///
+    /// Unlike `update_alert`, this does **not** change `updated_at`, so the alert
+    /// will not appear in incremental-sync results. Use this from an off-chain keeper
+    /// to prevent storage archival.
+    ///
+    /// # Auth
+    /// Requires a valid Stellar auth signature from `caller`, who must also be
+    /// the original owner of the alert.
+    ///
+    /// # Errors
+    /// Returns [`ContractError::AlertNotFound`] if `config_id` does not exist.
+    /// Returns [`ContractError::Unauthorized`] if `caller` is not the alert owner.
+    pub fn renew_alert_ttl(
+        env: Env,
+        caller: Address,
+        config_id: u64,
+    ) -> Result<(), ContractError> {
+        caller.require_auth();
+
+        let config: AlertConfig = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Alert(config_id))
+            .ok_or(ContractError::AlertNotFound)?;
+
+        Self::assert_owner(&config, &caller)?;
+
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Alert(config_id), DEFAULT_TTL, DEFAULT_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::AlertActive(config_id), DEFAULT_TTL, DEFAULT_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::OwnerIndex(config.owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::ContractIndex(config.target_contract.clone()), DEFAULT_TTL, DEFAULT_TTL);
 
         Ok(())
     }
@@ -1074,6 +1247,10 @@ mod tests {
         String::from_str(env, s)
     }
 
+    fn hash64(env: &Env) -> String {
+        String::from_str(env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+    }
+
     // ── Helpers shared by watcher-gating tests ────────────────────────────
 
     #[cfg(feature = "testutils")]
@@ -1127,7 +1304,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1156,7 +1333,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1221,7 +1398,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:unknown")],
         );
     }
@@ -1237,7 +1414,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1256,7 +1433,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -1278,7 +1455,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert1"),
-            &str(&env, "hash1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1286,7 +1463,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert2"),
-            &str(&env, "hash2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
     }
@@ -1305,7 +1482,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1371,21 +1548,21 @@ mod tests {
         assert_eq!(client.get_alert_count(), 0);
 
         // Cycle 1: register -> count goes to 1
-        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &hash64(&env), &vec![&env]);
         assert_eq!(client.get_alert_count(), 1);
         // remove -> count stays at 1 (monotonic)
         client.remove_alert(&owner, &id1);
         assert_eq!(client.get_alert_count(), 1);
 
         // Cycle 2: register -> count goes to 2
-        let id2 = client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        let id2 = client.register_alert(&owner, &target, &str(&env, "B"), &hash64(&env), &vec![&env]);
         assert_eq!(client.get_alert_count(), 2);
         // remove -> count stays at 2
         client.remove_alert(&owner, &id2);
         assert_eq!(client.get_alert_count(), 2);
 
         // Cycle 3: register -> count goes to 3
-        let id3 = client.register_alert(&owner, &target, &str(&env, "C"), &str(&env, "h"), &vec![&env]);
+        let id3 = client.register_alert(&owner, &target, &str(&env, "C"), &hash64(&env), &vec![&env]);
         assert_eq!(client.get_alert_count(), 3);
         // remove -> count stays at 3
         client.remove_alert(&owner, &id3);
@@ -1457,7 +1634,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env],
         );
         assert_eq!(client.get_alert_count(), 1u64);
@@ -1478,7 +1655,7 @@ mod tests {
                 &owner,
                 &target,
                 &label,
-                &str(&env, "h"),
+                &hash64(&env),
                 &vec![&env],
             );
         }
@@ -1508,7 +1685,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1545,7 +1722,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1580,7 +1757,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1619,7 +1796,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1710,7 +1887,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Timestamp Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1766,7 +1943,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Bulk Rules Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &rules,
         );
 
@@ -1797,7 +1974,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Original"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1810,7 +1987,7 @@ mod tests {
         assert_eq!(cfg.label, str(&env, "Renamed"));
         // rules and webhook_hash must be untouched
         assert_eq!(cfg.rules.get(0).unwrap(), str(&env, "rule:transfer"));
-        assert_eq!(cfg.webhook_hash, str(&env, "hash"));
+        assert_eq!(cfg.webhook_hash, hash64(&env));
         assert!(cfg.active);
     }
 
@@ -1826,7 +2003,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1866,7 +2043,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1884,7 +2061,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -1909,14 +2086,14 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Active"),
-            &str(&env, "h1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         let _id2 = client.register_alert(
             &owner,
             &target,
             &str(&env, "Inactive"),
-            &str(&env, "h2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -1943,7 +2120,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -1972,14 +2149,14 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A1"),
-            &str(&env, "h1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         client.register_alert(
             &owner,
             &target,
             &str(&env, "A2"),
-            &str(&env, "h2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -2017,7 +2194,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -2040,8 +2217,8 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
-        client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "A"), &hash64(&env), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "B"), &hash64(&env), &vec![&env]);
 
         let results = client.get_alerts_modified_since(&0u64);
         assert_eq!(results.len(), 2);
@@ -2063,12 +2240,12 @@ mod tests {
         let target = Address::generate(&env);
 
         // Register at ledger timestamp 0 (default in tests)
-        let _id1 = client.register_alert(&owner, &target, &str(&env, "Old"), &str(&env, "h"), &vec![&env]);
+        let _id1 = client.register_alert(&owner, &target, &str(&env, "Old"), &hash64(&env), &vec![&env]);
 
         // Advance the ledger timestamp so the next alert has a higher updated_at
         env.ledger().with_mut(|li| li.timestamp = 1000);
 
-        let _id2 = client.register_alert(&owner, &target, &str(&env, "New"), &str(&env, "h"), &vec![&env]);
+        let _id2 = client.register_alert(&owner, &target, &str(&env, "New"), &hash64(&env), &vec![&env]);
 
         // Query with since = 1000 — should only return the second alert
         let results = client.get_alerts_modified_since(&1000u64);
@@ -2084,8 +2261,8 @@ mod tests {
         let target = Address::generate(&env);
 
         // Register both alerts at timestamp 0
-        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
-        let _id2 = client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &hash64(&env), &vec![&env]);
+        let _id2 = client.register_alert(&owner, &target, &str(&env, "B"), &hash64(&env), &vec![&env]);
 
         // Advance time and update the first alert
         env.ledger().with_mut(|li| li.timestamp = 500);
@@ -2104,8 +2281,8 @@ mod tests {
         let owner = Address::generate(&env);
         let target = Address::generate(&env);
 
-        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &str(&env, "h"), &vec![&env]);
-        client.register_alert(&owner, &target, &str(&env, "B"), &str(&env, "h"), &vec![&env]);
+        let id1 = client.register_alert(&owner, &target, &str(&env, "A"), &hash64(&env), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "B"), &hash64(&env), &vec![&env]);
 
         client.remove_alert(&owner, &id1);
 
@@ -2123,7 +2300,7 @@ mod tests {
         let target = Address::generate(&env);
 
         env.ledger().with_mut(|li| li.timestamp = 42);
-        client.register_alert(&owner, &target, &str(&env, "Boundary"), &str(&env, "h"), &vec![&env]);
+        client.register_alert(&owner, &target, &str(&env, "Boundary"), &hash64(&env), &vec![&env]);
 
         // since == updated_at should be inclusive
         let results = client.get_alerts_modified_since(&42u64);
@@ -2148,7 +2325,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env],
         );
     }
@@ -2167,7 +2344,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         env.set_auths(&[]);
@@ -2187,7 +2364,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env],
         );
         env.set_auths(&[]);
@@ -2207,7 +2384,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env],
         );
         env.set_auths(&[]);
@@ -2256,7 +2433,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "h"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         env.set_auths(&[]);
@@ -2277,7 +2454,7 @@ mod tests {
                 &owner,
                 &target,
                 &str(&env, "alert"),
-                &str(&env, "hash"),
+                &hash64(&env),
                 &vec![&env],
             );
             if let Some(p) = prev_id {
@@ -2299,7 +2476,7 @@ mod tests {
             &owner,
             &old_target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2327,7 +2504,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2351,7 +2528,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2377,7 +2554,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2410,7 +2587,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2428,7 +2605,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2452,7 +2629,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2481,21 +2658,21 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert 1"),
-            &str(&env, "hash1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         let id2 = client.register_alert(
             &owner,
             &target,
             &str(&env, "Alert 2"),
-            &str(&env, "hash2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
         let id3 = client.register_alert(
             &owner,
             &target,
             &str(&env, "Alert 3"),
-            &str(&env, "hash3"),
+            &str(&env, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -2523,14 +2700,14 @@ mod tests {
             &owner1,
             &target,
             &str(&env, "Owner1 Alert"),
-            &str(&env, "hash1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         let id2 = client.register_alert(
             &owner2,
             &target,
             &str(&env, "Owner2 Alert"),
-            &str(&env, "hash2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -2552,14 +2729,14 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert 1"),
-            &str(&env, "hash1"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
         let id2 = client.register_alert(
             &owner,
             &target,
             &str(&env, "Alert 2"),
-            &str(&env, "hash2"),
+            &str(&env, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -2582,19 +2759,19 @@ mod tests {
         let target = Address::generate(&env);
 
         for label in ["A", "B", "C", "D", "E"] {
-            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+            client.register_alert(&owner, &target, &str(&env, label), &hash64(&env), &vec![&env]);
         }
 
         // first page
-        let page1 = client.get_alerts_by_owner_paginated(&owner, &0u32, &3u32);
+        let page1 = client.get_alerts_by_owner_paginated(&owner, &owner, &0u32, &3u32).unwrap();
         assert_eq!(page1.len(), 3);
 
         // second page
-        let page2 = client.get_alerts_by_owner_paginated(&owner, &3u32, &3u32);
+        let page2 = client.get_alerts_by_owner_paginated(&owner, &owner, &3u32, &3u32).unwrap();
         assert_eq!(page2.len(), 2);
 
         // offset beyond length returns empty
-        let empty = client.get_alerts_by_owner_paginated(&owner, &10u32, &3u32);
+        let empty = client.get_alerts_by_owner_paginated(&owner, &owner, &10u32, &3u32).unwrap();
         assert_eq!(empty.len(), 0);
     }
 
@@ -2606,10 +2783,10 @@ mod tests {
         let target = Address::generate(&env);
 
         for label in ["A", "B", "C", "D"] {
-            client.register_alert(&owner, &target, &str(&env, label), &str(&env, "h"), &vec![&env]);
+            client.register_alert(&owner, &target, &str(&env, label), &hash64(&env), &vec![&env]);
         }
 
-        let page = client.get_contract_alerts_paginated(&target, &1u32, &2u32);
+        let page = client.get_contract_alerts_paginated(&owner, &target, &1u32, &2u32).unwrap();
         assert_eq!(page.len(), 2);
     }
 
@@ -2634,7 +2811,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:mint")],
         );
 
@@ -2670,7 +2847,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "A"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2730,7 +2907,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2760,7 +2937,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2796,7 +2973,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2829,7 +3006,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Alert"),
-            &str(&env, "hash"),
+            &hash64(&env),
             &vec![&env],
         );
 
@@ -2865,7 +3042,7 @@ mod tests {
             &owner,
             &target,
             &str(&env, "Immutable"),
-            &str(&env, "original-hash"),
+            &hash64(&env),
             &vec![&env, str(&env, "rule:transfer")],
         );
 
@@ -2887,8 +3064,8 @@ mod tests {
     // B-7. DEFAULT_TTL and MAX_TTL constants have the expected values
     #[test]
     fn test_ttl_constants() {
-        // DEFAULT_TTL ≈ 24 hours at 5 s/ledger
-        assert_eq!(DEFAULT_TTL, 17_280);
+        // DEFAULT_TTL ≈ 7 days at 5 s/ledger (120_960 ledgers)
+        assert_eq!(DEFAULT_TTL, 120_960);
         // MAX_TTL ≈ 31 days at 5 s/ledger
         assert_eq!(MAX_TTL, 535_680);
         // MAX_TTL must be strictly greater than DEFAULT_TTL

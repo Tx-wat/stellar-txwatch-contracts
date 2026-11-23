@@ -23,7 +23,7 @@ fn alerts_read_back_identically_through_every_index() {
         &owner,
         &target,
         &String::from_str(&env, "persist"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &vec![&env, String::from_str(&env, "rule:transfer")],
     );
 

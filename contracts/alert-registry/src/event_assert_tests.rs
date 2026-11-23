@@ -37,7 +37,7 @@ fn register_emits_alert_register() {
         &owner,
         &target,
         &String::from_str(&env, "alert"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &vec![&env, String::from_str(&env, "rule:transfer")],
     );
     assert!(emitted(&env, "alert", "register"));
@@ -50,7 +50,7 @@ fn remove_emits_alert_remove() {
         &owner,
         &target,
         &String::from_str(&env, "alert"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &vec![&env, String::from_str(&env, "rule:transfer")],
     );
     client.remove_alert(&owner, &id);
@@ -64,7 +64,7 @@ fn bump_emits_alert_bump() {
         &owner,
         &target,
         &String::from_str(&env, "alert"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &vec![&env, String::from_str(&env, "rule:transfer")],
     );
     client.bump_alert(&id, &1_000);

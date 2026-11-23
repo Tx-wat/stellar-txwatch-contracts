@@ -29,7 +29,7 @@ fn setup() -> (Env, AlertRegistryClient<'static>, watcher_registry::WatcherRegis
         &owner,
         &target,
         &String::from_str(&env, "alert"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &vec![&env, String::from_str(&env, "rule:transfer")],
     );
     (env, alert, watcher, admin)

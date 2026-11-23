@@ -42,7 +42,7 @@ fn hostile_rule_strings_are_refused_without_panicking() {
             &owner,
             &target,
             &String::from_str(&env, "alert"),
-            &String::from_str(&env, "hash"),
+            &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &rules,
         );
         assert_eq!(result, Err(Ok(ContractError::InvalidRuleDescriptor)), "input {raw:?}");
@@ -63,7 +63,7 @@ fn the_two_valid_rules_are_accepted() {
         &owner,
         &target,
         &String::from_str(&env, "alert"),
-        &String::from_str(&env, "hash"),
+        &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         &rules,
     );
     assert!(result.is_ok());

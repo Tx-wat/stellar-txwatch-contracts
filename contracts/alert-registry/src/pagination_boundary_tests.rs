@@ -25,7 +25,7 @@ fn setup() -> (Env, AlertRegistryClient<'static>, Address) {
             &owner,
             &target,
             &label,
-            &String::from_str(&env, "hash"),
+            &String::from_str(&env, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             &vec![&env, String::from_str(&env, "rule:transfer")],
         );
     }
