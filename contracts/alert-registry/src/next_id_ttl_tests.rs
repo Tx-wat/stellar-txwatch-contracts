@@ -162,3 +162,19 @@ fn first_registration_after_many_renewals_gets_unique_id() {
     let id2 = register_one(&client, &env, &owner, &target);
     assert_eq!(id2, 2u64, "third registration must continue from counter = 2");
 }
+
+/// Issue #376: every persistent TTL extension must use DEFAULT_TTL. A
+/// hard-coded 100-ledger value would make renewed alerts and owner indexes
+/// expire in minutes instead of the documented seven days.
+#[test]
+fn no_short_hard_coded_ttl_extensions_remain() {
+    let source = include_str!("storage.rs");
+    assert!(
+        !source.contains("100, 100"),
+        "storage.rs must not contain hard-coded 100-ledger TTL extensions"
+    );
+    assert!(
+        source.contains("DEFAULT_TTL, DEFAULT_TTL"),
+        "TTL extensions must use DEFAULT_TTL"
+    );
+}
