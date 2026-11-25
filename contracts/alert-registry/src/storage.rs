@@ -94,7 +94,7 @@ pub fn bulk_renew_one(env: &Env, id: u64) -> bool {
         .persistent()
         .extend_ttl(&DataKey::Alert(id), 100, 100);
     extend_owner_index_ttl(env, &cfg.owner);
-    extend_contract_index_ttl(env, &cfg.target);
+    extend_contract_index_ttl(env, &cfg.target_contract);
     true
 }
 
