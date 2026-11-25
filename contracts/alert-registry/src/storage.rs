@@ -79,7 +79,7 @@ pub fn has_alert(env: &Env, id: u64) -> bool {
 pub fn extend_alert_ttl(env: &Env, id: u64) {
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::Alert(id), 100, 100);
+        .extend_ttl(&DataKey::Alert(id), DEFAULT_TTL, DEFAULT_TTL);
 }
 
 /// Extend the TTL of an alert entry and its indexes without modifying data.
@@ -92,7 +92,7 @@ pub fn bulk_renew_one(env: &Env, id: u64) -> bool {
     };
     env.storage()
         .persistent()
-        .extend_ttl(&DataKey::Alert(id), 100, 100);
+        .extend_ttl(&DataKey::Alert(id), DEFAULT_TTL, DEFAULT_TTL);
     extend_owner_index_ttl(env, &cfg.owner);
     extend_contract_index_ttl(env, &cfg.target_contract);
     true
@@ -155,7 +155,7 @@ pub fn extend_owner_index_ttl(env: &Env, owner: &Address) {
     {
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), 100, 100);
+            .extend_ttl(&DataKey::OwnerIndex(owner.clone()), DEFAULT_TTL, DEFAULT_TTL);
     }
 }
 
@@ -216,7 +216,7 @@ pub fn extend_contract_index_ttl(env: &Env, target: &Address) {
     {
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::ContractIndex(target.clone()), 100, 100);
+            .extend_ttl(&DataKey::ContractIndex(target.clone()), DEFAULT_TTL, DEFAULT_TTL);
     }
 }
 
