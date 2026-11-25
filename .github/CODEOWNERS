@@ -1,0 +1,16 @@
+# Code owners are automatically requested for review on PRs touching their paths.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+# Later rules take precedence over earlier ones.
+
+# Default: any contributor can review unless a more specific rule applies.
+*                              @Tx-wat/contributors
+
+# Core contracts
+/contracts/alert-registry/     @Tx-wat/core-team
+/contracts/watcher-registry/   @Tx-wat/core-team
+
+# Generated TypeScript/Rust bindings
+/bindings/                     @Tx-wat/sdk-maintainers
+
+# Documentation
+/docs/                         @Tx-wat/contributors

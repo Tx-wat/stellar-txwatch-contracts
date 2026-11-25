@@ -13,6 +13,7 @@
 - [ ] No new clippy warnings introduced
 - [ ] Auth requirements verified (`require_auth()` present on all mutating functions)
 - [ ] `ContractError` variants documented in rustdoc
+- [ ] Updated WASM size table in README if contract binary size changed by more than 5 KB
 
 ## Checklist
 - [ ] My code follows the repository style

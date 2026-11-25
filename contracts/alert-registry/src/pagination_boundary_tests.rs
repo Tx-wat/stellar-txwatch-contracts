@@ -6,6 +6,7 @@
 
 #![cfg(test)]
 
+extern crate alloc;
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
 
 use crate::{AlertRegistry, AlertRegistryClient, MAX_BATCH_SIZE};
@@ -109,7 +110,7 @@ fn limit_above_max_batch_size_is_clamped() {
 
     // Register MAX_BATCH_SIZE + 5 alerts so there is more data than the cap.
     for i in 0..(MAX_BATCH_SIZE + 5) {
-        let label = String::from_str(&env, &format!("alert{i}"));
+        let label = String::from_str(&env, if i % 2 == 0 { "alert-even" } else { "alert-odd" });
         client.register_alert(
             &owner,
             &target,
@@ -130,4 +131,43 @@ fn limit_above_max_batch_size_is_clamped() {
         MAX_BATCH_SIZE,
         "limit 1000 should be clamped to MAX_BATCH_SIZE={MAX_BATCH_SIZE}"
     );
+}
+
+/// #408: with exactly 2 alerts registered, an offset beyond the index length must
+/// return an empty vec (no panic) for both paginated queries.
+#[test]
+fn offset_beyond_index_length_returns_empty_vec() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AlertRegistry, ());
+    let client = AlertRegistryClient::new(&env, &contract_id);
+
+    let querier = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    // Register exactly 2 alerts.
+    for label_str in ["a0", "a1"] {
+        client.register_alert(
+            &owner,
+            &target,
+            &String::from_str(&env, label_str),
+            &hash64(&env),
+            &vec![&env, String::from_str(&env, "rule:transfer")],
+            &None,
+        );
+    }
+
+    // Offset 100 is well past the 2 registered alerts.
+    let by_contract = client
+        .try_get_contract_alerts_paginated(&querier, &target, &100, &10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(by_contract.len(), 0);
+
+    let by_owner = client
+        .try_get_alerts_by_owner_paginated(&querier, &owner, &100, &10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(by_owner.len(), 0);
 }

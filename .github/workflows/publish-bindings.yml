@@ -1,18 +1,30 @@
 name: Publish TypeScript Bindings
 
-# Runs on every published GitHub release (e.g. v0.1.0).
-# Generates TypeScript bindings from the compiled WASM using
-# `stellar contract bindings typescript`, then publishes the
-# resulting package to npm under @tx-wat/watcher-registry.
+# Issue #475 — publish both TypeScript binding packages to npm on every
+# published GitHub release. Manual runs (workflow_dispatch) execute only the
+# dry-run path: they build each package and log exactly what `npm publish`
+# would upload, without publishing anything.
 on:
   release:
     types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   publish-bindings:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - package: alert-registry
+            wasm: alert_registry
+            npm_name: "@tx-wat/alert-registry-bindings"
+          - package: watcher-registry
+            wasm: watcher_registry
+            npm_name: "@tx-wat/watcher-registry"
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -46,39 +58,42 @@ jobs:
       # ── Generate TypeScript bindings ─────────────────────────────────────────
       # `stellar contract bindings typescript` reads the WASM contract spec and
       # emits a fully-typed npm package into the output directory.
-      - name: Generate WatcherRegistry TypeScript bindings
+      - name: Generate ${{ matrix.package }} TypeScript bindings
         run: |
           stellar contract bindings typescript \
-            --wasm target/wasm32-unknown-unknown/release/watcher_registry.wasm \
+            --wasm target/wasm32-unknown-unknown/release/${{ matrix.wasm }}.wasm \
             --contract-id CXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX \
-            --output-dir bindings/watcher-registry \
+            --output-dir bindings/${{ matrix.package }} \
             --overwrite
 
       # ── Merge hand-maintained package metadata ───────────────────────────────
       # The generator writes its own package.json; we overlay our curated
-      # metadata (name, version, description, keywords, repository, etc.)
-      # so the published package has the correct npm identity.
+      # metadata so the published package has the correct npm identity.
       - name: Overlay package.json metadata
+        env:
+          PKG_DIR: bindings/${{ matrix.package }}
+          NPM_NAME: ${{ matrix.npm_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           node - <<'EOF'
           const fs   = require("fs");
-          const path = "bindings/watcher-registry/package.json";
+          const path = `${process.env.PKG_DIR}/package.json`;
 
-          // Generated package.json from stellar CLI
           const generated = JSON.parse(fs.readFileSync(path, "utf8"));
+          const pkgName = process.env.NPM_NAME;
+          const dirName = process.env.PKG_DIR.split("/").pop();
 
-          // Our curated metadata
           const meta = {
-            name:        "@tx-wat/watcher-registry",
+            name:        pkgName,
             version:     process.env.RELEASE_TAG.replace(/^v/, ""),
-            description: "TypeScript bindings for the stellar-txwatch WatcherRegistry Soroban contract",
-            keywords:    ["stellar", "soroban", "smart-contract", "watcher-registry", "txwatch", "blockchain"],
+            description: `TypeScript bindings for the stellar-txwatch ${dirName} Soroban contract`,
+            keywords:    ["stellar", "soroban", "smart-contract", dirName, "txwatch", "blockchain"],
             author:      "Tx-wat <https://github.com/Tx-wat>",
             license:     "MIT",
             repository: {
               type:      "git",
               url:       "https://github.com/Tx-wat/stellar-txwatch-contracts.git",
-              directory: "bindings/watcher-registry",
+              directory: process.env.PKG_DIR,
             },
             homepage: "https://github.com/Tx-wat/stellar-txwatch-contracts#readme",
             bugs:     { url: "https://github.com/Tx-wat/stellar-txwatch-contracts/issues" },
@@ -88,8 +103,6 @@ jobs:
           fs.writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
           console.log("package.json merged:", merged.name, merged.version);
           EOF
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
 
       # ── Node.js / npm setup ──────────────────────────────────────────────────
       - name: Set up Node.js
@@ -100,16 +113,24 @@ jobs:
 
       # ── Install deps and build ───────────────────────────────────────────────
       - name: Install dependencies
-        working-directory: bindings/watcher-registry
+        working-directory: bindings/${{ matrix.package }}
         run: npm install
 
       - name: Build TypeScript package
-        working-directory: bindings/watcher-registry
+        working-directory: bindings/${{ matrix.package }}
         run: npm run build
 
-      # ── Publish to npm ───────────────────────────────────────────────────────
+      # ── Dry run: log what would be published (always runs) ───────────────────
+      - name: Dry run (log package contents, nothing published)
+        working-directory: bindings/${{ matrix.package }}
+        run: |
+          echo "Would publish ${{ matrix.npm_name }} with the following contents:"
+          npm publish --dry-run --access public
+
+      # ── Publish to npm (release events only) ─────────────────────────────────
       - name: Publish to npm
-        working-directory: bindings/watcher-registry
+        if: github.event_name == 'release'
+        working-directory: bindings/${{ matrix.package }}
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

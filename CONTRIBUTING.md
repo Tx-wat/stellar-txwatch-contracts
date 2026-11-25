@@ -19,6 +19,17 @@ cargo install --locked stellar-cli --features opt
 
 Run `cargo fmt` before pushing. CI enforces formatting with `cargo fmt --all -- --check`, so unformatted code will fail the build. Formatting settings live in `rustfmt.toml`.
 
+### Pre-commit hooks (recommended)
+
+The repo ships a [`.pre-commit-config.yaml`](.pre-commit-config.yaml) that runs the same `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings` checks CI uses, so problems surface before you commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Run the hooks against the whole tree at any time with `pre-commit run --all-files`.
+
 ## Build
 
 ```bash
@@ -95,8 +106,11 @@ for the detailed guide.
 
 1. **Propose** — open an issue describing the descriptor name, its semantics,
    and the use case it enables. Get agreement before writing code.
-2. **Contract change** — add the descriptor to the `validate_rules` allow-list
-   in the relevant contract so it is accepted by validation.
+2. **Contract change** — in `contracts/alert-registry/src/lib.rs`, add the descriptor
+   to the allow-list in `validate_rule` (not `validate_rules`, which only loops over
+   the entries and checks length and duplicates). There is no `get_supported_rules`.
+   The full walkthrough, including the positive, near-miss, and duplicate tests, is in
+   [docs/contributing-contracts.md](docs/contributing-contracts.md#adding-a-new-rule-descriptor).
 3. **Watcher change** — implement the matching logic for the descriptor in
    [`stellar-txwatch-core`](https://github.com/Tx-wat/stellar-txwatch-core).
 4. **Docs** — update the rule descriptor table in `docs/alert-registry.md`.

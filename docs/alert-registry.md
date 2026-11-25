@@ -80,6 +80,37 @@ To rotate a webhook URL, use `update_webhook` with the new SHA-256 hex digest an
 
 ---
 
+## Webhook Rotation
+
+Rotating an alert's webhook uses a two-step flow. The new hash is staged in `AlertConfig.pending_webhook_hash` first, and the live `webhook_hash` changes only when the owner confirms. This avoids a window where the old webhook is removed before the new one is confirmed by the off-chain watcher.
+
+### Lifecycle of `pending_webhook_hash`
+
+| State | `webhook_hash` | `pending_webhook_hash` | Set by |
+|---|---|---|---|
+| Registered, no rotation in progress | `H1` | `None` | `register_alert` |
+| Rotation proposed | `H1` (unchanged) | `Some(H2)` | `propose_webhook` |
+| Proposal overwritten | `H1` (unchanged) | `Some(H3)` | second `propose_webhook` |
+| Rotation confirmed | `H3` | `None` | `confirm_webhook` |
+
+Step by step:
+
+1. **Propose.** The owner calls `propose_webhook(caller, config_id, new_webhook_hash)`. The contract stores the hash in `pending_webhook_hash`, updates `updated_at`, and emits `(alert, wh_prop)` with data `(config_id, caller)`. The live `webhook_hash` is not changed, so the watcher keeps posting to the current URL.
+2. **Overwrite (optional).** A second `propose_webhook` replaces the pending value. Only the most recent proposal is kept, and the earlier one is lost.
+3. **Confirm.** The owner calls `confirm_webhook(caller, config_id)`. The contract takes the pending value, writes it to `webhook_hash`, clears `pending_webhook_hash`, and emits `(alert, webhook)` with data `(config_id, caller)`.
+
+### Edge cases
+
+- **Confirm with nothing pending** returns `NoPendingWebhook`. The stored state does not change.
+- **Propose or confirm by a non-owner** returns `Unauthorized`. The owner check runs after `require_auth()`.
+- **Unknown alert ID** returns `AlertNotFound` for both functions.
+- **Direct update bypasses the flow.** `update_webhook` sets `webhook_hash` immediately and does **not** clear `pending_webhook_hash`. A pending proposal can therefore survive a direct update, and a later `confirm_webhook` will overwrite the directly-set hash. Use one path per rotation, not both.
+- **No length check on propose.** `propose_webhook` stores the value as given. `update_webhook` requires exactly 64 characters. Validate the hash off-chain (see [Webhook Hash Scheme](#webhook-hash-scheme)) before proposing, because an invalid value is only caught when it is confirmed and used.
+
+### Watcher behavior
+
+Watchers should treat `webhook_hash` as the only live value. Ignore `pending_webhook_hash` for delivery. Switch delivery to the new hash when the `alert.webhook` event for that `config_id` is seen, or when a re-read of the alert shows a changed `webhook_hash`.
+
 ## Rule descriptor format
 
 The `rules` field is a `Vec<String>` containing serialized rule descriptors. Each descriptor is a single string in the format `rule:<prefix>`, where `<prefix>` denotes the event or condition to watch for.
@@ -286,12 +317,13 @@ Returns all alert configs registered for a given target contract, including both
 
 Returns only the active alert configs (`active == true`) registered for a given target contract. Inactive alerts are excluded.
 
-If a `WatcherRegistry` is configured (via `set_watcher_registry`), `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher`.
+This function is not gated by the `WatcherRegistry`, even when one is configured. See [Watcher Gating](./watcher-registry.md#watcher-gating) for the gated list.
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query (gated when a watcher registry is set) |
 | `target_contract` | `Address` | Contract address to query |
 
 **Returns:** `Vec<AlertConfig>` — may be empty.
@@ -304,17 +336,20 @@ Paginated variant of `get_active_alerts_for_contract`. `offset`/`limit` apply to
 
 | Name | Type | Description |
 |---|---|---|
+| `querier` | `Address` | Address performing the query (gated when a watcher registry is set) |
 | `target_contract` | `Address` | Contract address to query |
 | `offset` | `u32` | Number of active alerts to skip |
 | `limit` | `u32` | Max alerts to return |
 
-**Returns:** `Vec<AlertConfig>`
+**Returns:** `Result<Vec<AlertConfig>, ContractError>` — `NotAWatcher` when gated and `querier` is not a watcher.
 
 ---
 
 ### `get_alert_ids_by_owner` / `get_alert_ids_for_contract`
 
-Return only the live alert IDs (entries still in storage) from the owner / contract index, without deserializing configs. Cheaper than the full getters; no watcher gating.
+Return only the live alert IDs (entries still in storage) from the owner / contract index, without deserializing configs. Cheaper than the full getters.
+
+Both take a `querier` and are gated like the config getters: when a `WatcherRegistry` is configured, `querier` must be a registered watcher or the call returns `ContractError::NotAWatcher` (#453).
 
 ### `get_alerts_by_owner`
 
@@ -390,12 +425,13 @@ Calling `propose_webhook` again before confirming overwrites the previous pendin
 | `caller` | `Address` | Must be the alert owner |
 | `config_id` | `u64` | ID of the alert to update |
 | `new_webhook_hash` | `String` | SHA-256 hex digest of the new webhook URL |
+| `note` | `Option<String>` | Optional reason for the rotation, max 128 bytes. Emitted in the event only; never stored on-chain (#420) |
 
 **Returns:** `Result<(), ContractError>`
 
-**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner; `LabelTooLong` if `note` exceeds 128 bytes.
 
-**Events:** Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address)`.
+**Events:** Emits `(Symbol("alert"), Symbol("wh_prop"))` with data `(id: u64, caller: Address, note: Option<String>)`.
 
 ---
 
@@ -424,18 +460,36 @@ Step 2 of the two-step webhook rotation flow. Promotes `pending_webhook_hash` to
 
 Extends the TTL of an alert and its index entries without modifying any data. This is the recommended way to keep an alert alive without changing `updated_at` (which would cause it to appear in incremental-sync results via `get_alerts_modified_since`).
 
-**Requires auth:** `caller` (must match `owner` of the config)
+**Requires auth:** `caller` (must be the `owner` of the config, or the delegate set by `set_delegate`)
 
 **Parameters**
 
 | Name | Type | Description |
 |---|---|---|
-| `caller` | `Address` | Must be the alert owner |
+| `caller` | `Address` | The alert owner or its delegate |
 | `config_id` | `u64` | ID of the alert to renew |
 
 **Returns:** `Result<(), ContractError>`
 
-**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is not the owner.
+**Events:** emits `(alert, bump)` with data `(config_id, DEFAULT_TTL)`.
+
+**Errors:** `AlertNotFound` if ID does not exist; `Unauthorized` if caller is neither the owner nor the delegate.
+
+---
+
+### `set_delegate` / `get_delegate`
+
+Lets an alert owner authorise another address (a delegate, e.g. an off-chain watcher service) to call `renew_alert_ttl` for one alert (#425).
+
+`set_delegate(caller, config_id, delegate: Option<Address>)`:
+
+- **Requires auth:** `caller`, who must be the alert owner.
+- Passing `Some(address)` sets the delegate; passing `None` clears it and revokes access immediately.
+- The delegate cannot transfer, update or remove the alert, and cannot change the delegate.
+- Removing the alert also clears its delegate.
+- **Errors:** `AlertNotFound`; `Unauthorized` if caller is not the owner.
+
+`get_delegate(config_id) -> Option<Address>` is a read-only query with no auth.
 
 ---
 
@@ -492,6 +546,8 @@ Returns the total number of alerts ever registered.
 ### `set_watcher_registry`
 
 Configures the `WatcherRegistry` contract address used for optional watcher-gating on read queries. Once set, `get_alerts_for_contract`, `get_alerts_by_owner`, and their paginated variants will cross-call `WatcherRegistry::is_watcher_authorized` before returning data. Admin only.
+
+Setup steps, the gated and ungated function table, and the current limits on disabling gating are in [Watcher Gating](./watcher-registry.md#watcher-gating). Do not pass the zero address to disable gating: the code does not treat it as "off".
 
 **Requires auth:** `admin`
 
@@ -611,3 +667,41 @@ Admin-only. Sets `active = false` / `true` on an alert without owner auth. Owner
 **Errors:** `Unauthorized` (non-admin), `AlertNotFound`.
 
 **Events:** `("alert", "update")` with `(id, admin, active)`.
+
+---
+
+### `update_target_contract`
+
+Moves an alert to a different target contract. The contract index is migrated from the old target to the new one, and `updated_at` is refreshed.
+
+**Requires auth:** `caller` (must match `owner` of the config)
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Must be the alert owner |
+| `config_id` | `u64` | Alert to update |
+| `new_target` | `Address` | New target contract |
+
+**Returns:** `Result<(), ContractError>`
+
+**Errors:** `ContractPaused` while the contract is paused; `AlertNotFound` if the ID does not exist; `Unauthorized` if caller is not the owner.
+
+**Events:** none emitted by this function.
+
+---
+
+### `deactivate_all_alerts`
+
+Sets `active = false` on every alert owned by `caller` and returns how many were deactivated. Used as an emergency stop for one owner's alerts.
+
+**Requires auth:** `caller`
+
+| Name | Type | Description |
+|---|---|---|
+| `caller` | `Address` | Owner whose alerts are deactivated |
+
+**Returns:** `u32` — the number of alerts that were deactivated.
+
+**Errors:** the function panics (instead of returning an error) if the contract is paused.
+
+**Events:** none emitted by this function.

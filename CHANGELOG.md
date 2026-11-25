@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `AlertRegistry::get_alert_summary(owner) -> AlertSummary` returns `{ total, active, inactive }` in one call (#419).
+- `WatcherRegistry::batch_remove_watchers(admin, watchers) -> Result<u32, ContractError>` removes up to `MAX_BATCH_SIZE` (20) watchers in one call, skipping unregistered addresses and emitting `watcher.remove` per removed address. Returns `BatchTooLarge` for oversized batches (#421).
+- Optional `note: Option<String>` (max 128 bytes) on `propose_webhook`, included in the `alert.wh_prop` event data and not stored on-chain (#420).
+
 ### Changed
+- **Breaking:** `AlertRegistry::propose_webhook` takes a trailing `note` argument, and `alert.wh_prop` event data is now `(id, caller, note)` (#420).
 - **Breaking:** `WatcherRegistry::remove_watcher` now returns `ContractError::WatcherNotFound` when the address is not registered, instead of `Ok(())` (#231).
 - `WatcherRegistry::register_watcher` enforces `MAX_WATCHERS` (100) and returns the new `ContractError::WatcherLimitExceeded` (#232). See `docs/watcher-registry.md`.
 - `clear_all_watchers` resets the watcher count to 0; covered by a unit test (#230).
 - Documented the decision to keep the Vec-based `is_authorized` in `docs/ADR-001-watcher-authorization-storage.md` (#233).
+- **Migration guide:** added `docs/migrations/v0.2.md`, which covers the breaking `AlertConfig.tags` field and the new trailing `tags` argument on `register_alert`, including TypeScript caller updates and how existing on-chain entries deserialise (`tags = None`) (#471).
 - **Breaking change:** `AlertRegistry::get_per_owner_alert_limit` now returns
 ` Option<u32>` instead of `u32`. It returns `None` when no limit has been set,
 `Some(0)` when the admin explicitly configured an unlimited limit, and

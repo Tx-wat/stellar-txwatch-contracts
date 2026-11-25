@@ -126,7 +126,41 @@ fn test_get_active_alerts_paginated() {
         ));
     }
     client.update_alert(&owner, &ids.get(0).unwrap(), &vec![&env, str(&env, "rule:transfer")], &false);
-    assert_eq!(client.get_active_alerts_paginated(&target, &0, &10).len(), 2);
-    assert_eq!(client.get_active_alerts_paginated(&target, &1, &10).len(), 1);
+    assert_eq!(client.get_active_alerts_paginated(&target, &target, &0, &10).unwrap().len(), 2);
+    assert_eq!(client.get_active_alerts_paginated(&target, &target, &1, &10).unwrap().len(), 1);
 }
 
+/// Issue #497: a single `batch_register_alerts` call at exactly `MAX_BATCH_SIZE`
+/// must succeed, issue unique sequential IDs, store every alert, and advance
+/// the global counter by exactly `MAX_BATCH_SIZE`.
+#[test]
+fn test_batch_register_alerts_at_max_batch_size() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+
+    let mut inputs = vec![&env];
+    for _ in 0..MAX_BATCH_SIZE {
+        inputs.push_back(input(&env, &target, "bulk"));
+    }
+    let ids = client.batch_register_alerts(&owner, &inputs);
+
+    // Exactly MAX_BATCH_SIZE IDs were returned, numbered 0..MAX_BATCH_SIZE in order,
+    // which also rules out duplicates.
+    assert_eq!(ids.len(), MAX_BATCH_SIZE);
+    for i in 0..ids.len() {
+        assert_eq!(ids.get(i).unwrap(), i as u64, "ID at position {i} must be {i}");
+    }
+
+    // Every alert is retrievable under its ID and carries the submitted data.
+    for i in 0..ids.len() {
+        let id = ids.get(i).unwrap();
+        let alert = client.get_alert(&id).expect("every batch alert must be stored");
+        assert_eq!(alert.label, str(&env, "bulk"));
+        assert_eq!(alert.owner, owner);
+    }
+
+    // The global counter reflects exactly MAX_BATCH_SIZE registrations.
+    assert_eq!(client.get_alert_count(), MAX_BATCH_SIZE as u64);
+    assert_eq!(client.get_active_alerts_for_contract(&target).len(), MAX_BATCH_SIZE);
+}

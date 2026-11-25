@@ -44,6 +44,10 @@ jobs:
           done < <(find . \( -name '*.rs' -o -name '*.ts' \) -not -path '*/target/*' -not -path '*/node_modules/*')
           exit $missing
 
+      # Issue #474 — fast WASM type/compile check before the full release build
+      - name: Check (WASM target)
+        run: cargo check --target wasm32-unknown-unknown
+
       # Issue #99 — WASM build verification
       - name: Build (WASM)
         run: cargo build --release --target wasm32-unknown-unknown
@@ -52,9 +56,28 @@ jobs:
       - name: Unit tests
         run: cargo test -p alert-registry -p watcher-registry
 
+      # Issue #472 — run feature-gated tests (e.g. gating_tests behind `testutils`)
+      - name: Tests (all features)
+        run: cargo test --all-features
+
       # Issue #300 — Integration test verification (cross-contract behavior)
       - name: Integration tests
         run: cargo test -p integration-tests
+
+      # Issue #477 — Enforce per-crate line-coverage floors from README.md
+      # (alert-registry >= 90%, watcher-registry >= 90%, integration-tests >= 80%).
+      # Each crate is measured separately so one crate cannot mask another.
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Coverage floor (alert-registry >= 90%)
+        run: cargo llvm-cov -p alert-registry --fail-under-lines 90 --summary-only
+
+      - name: Coverage floor (watcher-registry >= 90%)
+        run: cargo llvm-cov -p watcher-registry --fail-under-lines 90 --summary-only
+
+      - name: Coverage floor (integration-tests >= 80%)
+        run: cargo llvm-cov -p integration-tests --fail-under-lines 80 --summary-only
 
       # Issue #100 / #289 — Clippy lint check (deny warnings)
       - name: Clippy
@@ -70,9 +93,12 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --no-deps
 
-      # Issue #105 — Dependency vulnerability scanning
+      # Issue #105 / #476 — Dependency vulnerability scanning.
+      # `cargo audit` exits non-zero on any advisory matching a dependency in
+      # Cargo.lock; `--deny warnings` also fails on unmaintained/yanked crates
+      # so that a high-severity advisory can never pass silently.
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
       - name: Cargo audit
-        run: cargo audit
+        run: cargo audit --deny warnings

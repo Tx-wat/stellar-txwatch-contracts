@@ -5,9 +5,9 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
+use soroban_sdk::{testutils::{Address as _, Events as _}, vec, Address, Env, String, Symbol, TryIntoVal};
 
-use crate::{AlertRegistry, AlertRegistryClient};
+use crate::{AlertRegistry, AlertRegistryClient, Error};
 
 fn unauthed() -> (Env, AlertRegistryClient<'static>) {
     let env = Env::default();
@@ -63,4 +63,15 @@ fn set_per_owner_alert_limit_requires_admin_auth() {
     client.initialize(&admin);
     let result = client.try_set_per_owner_alert_limit(&admin, &5);
     assert!(result.is_err());
+}
+
+#[test]
+fn initialize_requires_admin_auth() {
+    // Front-running guard (#447): without the admin's signature, nobody can
+    // claim the first admin slot on a freshly deployed registry.
+    let (env, client) = unauthed();
+    let admin = Address::generate(&env);
+    let result = client.try_initialize(&admin);
+    assert!(result.is_err());
+    assert!(client.get_admins().is_none());
 }

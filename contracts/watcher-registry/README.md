@@ -70,7 +70,7 @@ See [docs/events.md](../../docs/events.md) for the full event reference.
 - **Last-admin guard** — `remove_admin` refuses to remove the final admin,
   preventing the contract from becoming permanently unmanageable.
 
-## Quick-start
+## Quick start
 
 ```bash
 # Build

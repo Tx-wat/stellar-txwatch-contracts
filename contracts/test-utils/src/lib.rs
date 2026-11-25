@@ -81,5 +81,12 @@ pub fn register_alert(
     owner: &Address,
     target: &Address,
 ) -> u64 {
-    client.register(owner, target, &str(env, "test alert"))
+    client.register_alert(
+        owner,
+        target,
+        &str(env, "test alert"),
+        &str(env, "a3f1b2c4d5e6f7089abcdef01234567890abcdef01234567890abcdef012345"),
+        &soroban_sdk::vec![env, str(env, "rule:transfer")],
+        &None,
+    )
 }

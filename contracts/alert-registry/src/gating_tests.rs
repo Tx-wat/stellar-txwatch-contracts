@@ -53,7 +53,7 @@ fn gate_not_set_lets_any_address_read() {
 fn gate_set_and_registered_watcher_can_read() {
     let (env, alert, watcher, admin) = setup();
     let watcher_addr = Address::generate(&env);
-    watcher.register_watcher(&admin, &watcher_addr, &None);
+    watcher.register_watcher(&admin, &watcher_addr, &None, &None);
     alert.set_watcher_registry(&admin, &watcher.address);
 
     let target = Address::generate(&env);
@@ -76,7 +76,7 @@ fn gate_set_and_unregistered_caller_is_refused() {
 fn removing_a_watcher_mid_test_revokes_read_access() {
     let (env, alert, watcher, admin) = setup();
     let watcher_addr = Address::generate(&env);
-    watcher.register_watcher(&admin, &watcher_addr, &None);
+    watcher.register_watcher(&admin, &watcher_addr, &None, &None);
     alert.set_watcher_registry(&admin, &watcher.address);
 
     let target = Address::generate(&env);
@@ -85,4 +85,67 @@ fn removing_a_watcher_mid_test_revokes_read_access() {
     watcher.remove_watcher(&admin, &watcher_addr);
     let result = alert.try_get_alerts_for_contract(&watcher_addr, &target);
     assert_eq!(result, Err(Ok(ContractError::NotAWatcher)));
+}
+
+// ── #452: active-alert reads are gated like the other read paths ──────────
+
+#[test]
+fn gate_set_blocks_stranger_on_active_alerts_for_contract() {
+    let (env, alert, watcher, admin) = setup();
+    let watcher_addr = Address::generate(&env);
+    watcher.register_watcher(&admin, &watcher_addr, &None);
+    alert.set_watcher_registry(&admin, &watcher.address);
+
+    let stranger = Address::generate(&env);
+    let target = Address::generate(&env);
+    let result = alert.try_get_active_alerts_for_contract(&stranger, &target);
+    assert_eq!(result, Err(Ok(ContractError::NotAWatcher)));
+
+    // A registered watcher is let through (unknown target has no active alerts).
+    let ok = alert.get_active_alerts_for_contract(&watcher_addr, &target).unwrap();
+    assert_eq!(ok.len(), 0);
+}
+
+#[test]
+fn gate_set_blocks_stranger_on_active_alerts_paginated() {
+    let (env, alert, watcher, admin) = setup();
+    alert.set_watcher_registry(&admin, &watcher.address);
+
+    let stranger = Address::generate(&env);
+    let target = Address::generate(&env);
+    let result = alert.try_get_active_alerts_paginated(&stranger, &target, &0, &10);
+    assert_eq!(result, Err(Ok(ContractError::NotAWatcher)));
+}
+
+// ── #453: ID-only queries are gated too ──────────────────────────────────
+
+#[test]
+fn gate_set_blocks_stranger_on_alert_id_queries() {
+    let (env, alert, watcher, admin) = setup();
+    alert.set_watcher_registry(&admin, &watcher.address);
+
+    let stranger = Address::generate(&env);
+    let target = Address::generate(&env);
+    let owner = Address::generate(&env);
+    assert_eq!(
+        alert.try_get_alert_ids_for_contract(&stranger, &target),
+        Err(Ok(ContractError::NotAWatcher))
+    );
+    assert_eq!(
+        alert.try_get_alert_ids_by_owner(&stranger, &owner),
+        Err(Ok(ContractError::NotAWatcher))
+    );
+}
+
+#[test]
+fn gate_set_allows_registered_watcher_on_alert_id_queries() {
+    let (env, alert, watcher, admin) = setup();
+    let watcher_addr = Address::generate(&env);
+    watcher.register_watcher(&admin, &watcher_addr, &None);
+    alert.set_watcher_registry(&admin, &watcher.address);
+
+    let target = Address::generate(&env);
+    let owner = Address::generate(&env);
+    assert!(alert.try_get_alert_ids_for_contract(&watcher_addr, &target).is_ok());
+    assert!(alert.try_get_alert_ids_by_owner(&watcher_addr, &owner).is_ok());
 }

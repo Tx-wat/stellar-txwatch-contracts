@@ -1,34 +1,55 @@
-# Event listener example
+# AlertRegistry Event Listener
 
-Prints `AlertRegistry` events from Soroban RPC as they are emitted. Start from here when you
-build an integration that reacts to alert changes.
+`index.ts` polls Soroban RPC for events emitted by the `AlertRegistry` contract and prints each one as a JSON line. It keeps a paging cursor, so a restart resumes where it stopped.
 
-## Run
+## Prerequisites
 
-```sh
-npm install @stellar/stellar-sdk tsx
-ALERT_REGISTRY_ID=<C...> npx tsx index.ts
+- **Node.js** 18 or later (LTS).
+- **`@stellar/stellar-sdk`** 12.x. The repo's bindings pin `12.3.0` (`bindings/watcher-registry/package.json`). Install it with `npm install @stellar/stellar-sdk@^12`.
+- **`tsx`** or another TypeScript runner, for example `npx tsx index.ts`.
+- A deployed **AlertRegistry** contract ID. See `DEPLOYMENTS.md` at the repo root for the current testnet address.
+
+## Environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `ALERT_REGISTRY_ID` | Yes | none | AlertRegistry contract address (`C...`, 56 characters). The script throws on startup if it is missing. |
+| `SOROBAN_RPC_URL` | No | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint to poll. |
+
+## Events subscribed to
+
+The listener subscribes to one event. It filters by contract ID and by the topic pair `("alert", "register")`.
+
+| Topics | Emitted by | Data tuple `(id, owner, target_contract)` | Notes |
+|---|---|---|---|
+| `["alert", "register"]` | `register_alert`, `batch_register_alerts` | `[id: u64, owner: Address, target_contract: Address]` | One event per new alert. |
+
+After `scValToNative`, `ev.value` becomes a positional array. `id` is a `bigint` in JavaScript, and the two addresses are `C...` (contract) or `G...` (account) strings.
+
+Each printed line has this shape:
+
+```json
+{"ledger":123456,"topics":["alert","register"],"data":[1,"G...OWNER","C...TARGET"]}
 ```
 
-`SOROBAN_RPC_URL` defaults to the testnet RPC. Set it to point at another node.
+Events for other actions (`update`, `remove`, `wh_prop`, `webhook`, `bump`) are not subscribed to. To handle them, add their topic pairs to the `topics` filter in `poll()`, and give each one its own data shape. The event reference in `docs/events.md` lists them.
 
-## What it filters
+## Handler contract
 
-The filter matches events from `ALERT_REGISTRY_ID` whose first topic is `alert` and second topic
-is `register`. Change the second topic to listen for another action, for example `remove` or
-`bump`. The full list is in [`docs/events.md`](../../docs/events.md).
+- `handle(ev)` is called once per event. Replace its body with real logic.
+- Handlers must be **idempotent**. A crash between handling an event and saving the cursor replays a few events on restart.
+- The cursor is held in memory only (`let cursor`). Persist it to disk or a database if you need restarts to resume without replaying from ledger 0.
 
-The topic values are built with `nativeToScVal(..., { type: "symbol" })` from the SDK, so the filter
-matches the same XDR the network emits.
+## Running against testnet
 
-## Cursor and restarts
+```bash
+cd examples/event-listener
+npm install @stellar/stellar-sdk@^12 tsx
+ALERT_REGISTRY_ID=<C...> \
+SOROBAN_RPC_URL=https://soroban-testnet.stellar.org \
+npx tsx index.ts
+```
 
-The example keeps the paging token of the last event in memory. A restart begins from ledger 0,
-so store the cursor to a file or database before using it in production. See
-[`docs/event-indexing.md`](../../docs/event-indexing.md) for the full pattern.
+Testnet addresses reset periodically. If the listener finds no events, check that `ALERT_REGISTRY_ID` matches the current deployment in `DEPLOYMENTS.md`.
 
-## Limits
-
-- The handler only prints. It does not verify the event against the ledger.
-- The base64 topic values are not checked against a live contract.
-- Not tested against a running testnet deployment.
+Network passphrase for reference: `Test SDF Network ; September 2015`.

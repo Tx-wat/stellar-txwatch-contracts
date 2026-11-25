@@ -39,11 +39,14 @@ and is suitable for use as a reference implementation.
 | --- | --- | --- |
 | `register_alert` | Register a new alert for a target contract with rules and webhook hash | Owner |
 | `remove_alert` | Remove an alert by ID | Owner or admin |
+| `set_alert_active` | Toggle only the `active` flag of an alert; rules, label, webhook and tags are unchanged | Owner |
 | `get_alert` | Fetch a single alert config by ID | None |
 | `get_contract_alerts` | List all alerts watching a target contract | None |
 | `get_contract_alerts_paginated` | Paginated list of alerts for a target contract | None |
 | `get_alerts_by_owner` | List all alerts owned by an address | None |
 | `get_alerts_by_owner_paginated` | Paginated list of alerts for an owner | None |
+| `get_alert_ids_by_owner_paginated` | One page of live alert IDs for an owner; `limit` capped at `MAX_BATCH_SIZE` | None |
+| `get_alert_count_for_contract` | Number of live alerts watching a target contract (`u32`, TypeScript `number`) | None |
 | `set_owner_limit` | Set the max active alerts per owner | Admin |
 | `transfer_admin` | Transfer the admin role to a new address | Admin |
 
@@ -67,15 +70,10 @@ for the full storage and TTL model.
 
 See [docs/events.md](../../docs/events.md) for the event schema.
 
-## Build
+## Quick start
 
 ```bash
 cargo build --release --target wasm32-unknown-unknown
-```
-
-## Test
-
-```bash
 cargo test
 ```
 

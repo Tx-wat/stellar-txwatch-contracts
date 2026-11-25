@@ -57,6 +57,35 @@ Emitted when an alert's webhook hash is rotated.
 
 ---
 
+### `alert.wh_prop`
+
+Emitted when the owner proposes a webhook rotation (step 1 of 2) via `propose_webhook`.
+The proposed hash is stored as `pending_webhook_hash` and is **not** yet active.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("alert")` |
+| Topic 1 | `Symbol("wh_prop")` |
+| Data | `(id: u64, caller: Address)` |
+
+> Indexers should treat this event as "rotation pending". The active webhook
+> does not change until the matching `alert.webhook` event is seen.
+
+**Status:** ✅ implemented (`propose_webhook`)
+
+---
+
+### `alert.wh_conf` (retired)
+
+An earlier design emitted `alert.wh_conf` from `confirm_webhook`. Issue #204 replaced it with the
+canonical `alert.webhook` event, so the current contract **does not emit** `alert.wh_conf`.
+Indexers should subscribe to `alert.webhook` for confirmations. Historical ledgers may still
+contain `alert.wh_conf` events, and they share the same data shape `(id: u64, caller: Address)`.
+
+**Status:** ⛔ retired (replaced by `alert.webhook` from `confirm_webhook`)
+
+---
+
 ### `alert.remove`
 
 Emitted when an alert is removed by its owner or by an admin.
@@ -106,6 +135,40 @@ Emitted when an alert's TTL is extended via `bump_alert`.
 
 ---
 
+### `alert.tags`
+
+Emitted when an alert's tags are replaced via `update_tags`.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("alert")` |
+| Topic 1 | `Symbol("tags")` |
+| Data | `(id: u64, caller: Address)` |
+
+> The new tag set is not included in the event. Read it with `get_alert`.
+
+**Status:** ✅ implemented (`update_tags`)
+
+---
+
+### `alert.transfer`
+
+Emitted when an alert changes owner via `transfer_alert_ownership`.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("alert")` |
+| Topic 1 | `Symbol("transfer")` |
+| Data | `(id: u64, old_owner: Address, new_owner: Address)` |
+
+> Owner indexes are updated in the same transaction. Indexers should move the
+> alert from `old_owner` to `new_owner` on this event. A no-op transfer
+> (`new_owner == owner`) emits nothing.
+
+**Status:** ✅ implemented (`transfer_alert_ownership`)
+
+---
+
 ### `admin.init`
 
 Emitted when the admin role is first initialised.
@@ -145,6 +208,19 @@ Emitted when the per-owner alert limit is changed.
 | Data | `(admin: Address, limit: u32)` |
 
 **Status:** ✅ implemented (`set_per_owner_alert_limit`)
+
+### `admin.watcher_reg`
+
+Emitted when the admin changes the watcher registry address used for read gating
+(audit trail, #423). Emitted on every successful call.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("admin")` |
+| Topic 1 | `Symbol("watcher_reg")` |
+| Data | `(admin: Address, watcher_registry: Address)` |
+
+**Status:** ✅ implemented (`set_watcher_registry`)
 
 ---
 
@@ -209,6 +285,22 @@ Emitted when the watcher registry admin role is transferred.
 | Data | `(old_admin: Address, new_admin: Address)` |
 
 **Status:** 🔲 planned (`transfer_admin`)
+
+---
+
+### `admin.watcher_reg`
+
+Planned event for registering the `AlertRegistry` watcher-registry link (`set_watcher_registry`).
+Tracked by issue #423. The data shape below is the proposed shape; implementors must confirm it
+against #423 before wiring the event.
+
+| Field | Value |
+|---|---|
+| Topic 0 | `Symbol("admin")` |
+| Topic 1 | `Symbol("watcher_reg")` |
+| Data | `(admin: Address, watcher_registry: Address)` |
+
+**Status:** 🔲 planned (`set_watcher_registry`, #423)
 
 ---
 

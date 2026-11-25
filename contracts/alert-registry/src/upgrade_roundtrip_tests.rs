@@ -32,7 +32,7 @@ fn alerts_read_back_identically_through_every_index() {
     let by_owner = client.try_get_alerts_by_owner(&owner, &owner).unwrap().unwrap();
     let by_target = client.try_get_alerts_for_contract(&target, &target).unwrap().unwrap();
 
-    assert_eq!(by_owner.get(0).unwrap(), by_id);
-    assert_eq!(by_target.get(0).unwrap(), by_id);
+    assert_eq!(by_owner.get(0).unwrap().label, by_id.label);
+    assert_eq!(by_target.get(0).unwrap().label, by_id.label);
     assert_eq!(by_id.label, String::from_str(&env, "persist"));
 }

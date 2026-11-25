@@ -50,3 +50,7 @@ dist/
 
 # OS artefacts
 Thumbs.db
+
+# One-time issue-creation helper scripts (not part of the codebase)
+issues_batch*.sh
+scripts/issues_batch*.sh

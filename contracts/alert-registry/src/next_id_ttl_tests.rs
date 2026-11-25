@@ -163,18 +163,30 @@ fn first_registration_after_many_renewals_gets_unique_id() {
     assert_eq!(id2, 2u64, "third registration must continue from counter = 2");
 }
 
-/// Issue #376: every persistent TTL extension must use DEFAULT_TTL. A
-/// hard-coded 100-ledger value would make renewed alerts and owner indexes
-/// expire in minutes instead of the documented seven days.
+/// Issue #375: bulk renewal must resolve the watched contract from
+/// `AlertConfig::target_contract` (the field actually stored), and must keep
+/// the alert and both indexes alive through the renewal cycles.
 #[test]
-fn no_short_hard_coded_ttl_extensions_remain() {
-    let source = include_str!("storage.rs");
+fn bulk_renew_extends_live_alerts() {
+    let (env, client) = setup();
+    let owner = Address::generate(&env);
+    let target = Address::generate(&env);
+    let id = register_one(&client, &env, &owner, &target);
+
+    for _ in 0..3 {
+        advance(&env, DEFAULT_TTL / 2);
+        let renewed = client
+            .bulk_renew_ttl(&vec![&env, id])
+            .expect("bulk renewal must succeed for a live alert");
+        assert_eq!(renewed, 1);
+    }
+
     assert!(
-        !source.contains("100, 100"),
-        "storage.rs must not contain hard-coded 100-ledger TTL extensions"
+        client.get_alert(&id).is_some(),
+        "bulk-renewed alert must remain readable"
     );
     assert!(
-        source.contains("DEFAULT_TTL, DEFAULT_TTL"),
-        "TTL extensions must use DEFAULT_TTL"
+        client.get_alert_ids_for_contract(&target).contains(id),
+        "contract index must survive bulk renewal"
     );
 }
