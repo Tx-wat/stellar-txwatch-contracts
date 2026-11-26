@@ -1301,7 +1301,7 @@ impl AlertRegistry {
     /// The number of alerts that were successfully renewed.
     ///
     /// # Errors
-    /// Returns [`ContractError::TooManyRules`] if `config_ids` exceeds
+    /// Returns [`ContractError::BatchTooLarge`] if `config_ids` exceeds
     /// [`MAX_BATCH_SIZE`].
     ///
     /// # Events
@@ -1311,7 +1311,7 @@ impl AlertRegistry {
         // Keeper TTL extension is a mutation: block it while paused, like bump_alert (#449).
         Self::assert_not_paused(&env)?;
         if config_ids.len() > MAX_BATCH_SIZE {
-            return Err(ContractError::TooManyRules);
+            return Err(ContractError::BatchTooLarge);
         }
 
         let mut renewed: u32 = 0;
