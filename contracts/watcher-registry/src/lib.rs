@@ -462,9 +462,6 @@ impl WatcherRegistry {
         }
         if !already_present {
             updated.push_back(new_watcher.clone());
-        } else {
-            // old was removed but new was already there — net count decreases by 1
-            storage::decrement_watcher_count(&env);
         }
 
         env.storage().instance().set(&DataKey::Watchers, &updated);
@@ -658,6 +655,9 @@ impl WatcherRegistry {
 
         // Reset the count to zero
         env.storage().instance().set(&DataKey::WatcherCount, &0u32);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("W_CNT"), &0u32);
 
         Ok(())
     }
@@ -754,6 +754,7 @@ impl WatcherRegistry {
         env.storage()
             .instance()
             .set(&symbol_short!("W_CNT"), &(count + 1));
+        storage::increment_watcher_count(env);
     }
 
     fn decrement_watcher_count(env: &Env) {
@@ -767,6 +768,7 @@ impl WatcherRegistry {
                 .instance()
                 .set(&symbol_short!("W_CNT"), &(count - 1));
         }
+        storage::decrement_watcher_count(env);
     }
 
     fn load_expiries(env: &Env) -> Map<Address, u64> {
@@ -1520,7 +1522,7 @@ mod tests {
         );
     }
 
-    // 29. replace_watcher when new_watcher is already registered — old removed, count decrements
+    // 29. replace_watcher when new_watcher is already registered — does not under-count
     #[test]
     fn test_replace_watcher_new_already_registered() {
         let (env, admin, client) = setup();
@@ -1535,7 +1537,7 @@ mod tests {
 
         assert!(!client.is_authorized(&old));
         assert!(client.is_authorized(&new));
-        assert_eq!(client.get_watcher_count(), 1);
+        assert_eq!(client.get_watcher_count(), 2);
     }
 
     // 30. replace_watcher emits watcher.remove and watcher.replace events
@@ -1582,5 +1584,25 @@ mod tests {
 
         // Verify non-admin returns false
         assert!(!client.is_admin(&non_admin));
+    }
+
+    // 32. Issue #379: replace_watcher when new_watcher is already present does not under-count
+    #[test]
+    fn test_replace_watcher_already_present_does_not_under_count() {
+        let (env, admin, client) = setup();
+        let old = Address::generate(&env);
+        let new = Address::generate(&env);
+
+        client.register_watcher(&admin, &old);
+        client.register_watcher(&admin, &new);
+        let count_before = client.get_watcher_count();
+
+        client.replace_watcher(&admin, &old, &new);
+
+        assert_eq!(
+            client.get_watcher_count(),
+            count_before,
+            "watcher count must not decrement when replacing with an already-registered watcher"
+        );
     }
 }

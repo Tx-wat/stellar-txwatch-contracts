@@ -19,10 +19,10 @@
 
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    vec, Address, Env, String,
+    vec, Address, Env, String, Vec,
 };
 
-use crate::{AlertRegistry, AlertRegistryClient, DEFAULT_TTL};
+use crate::{AlertRegistry, AlertRegistryClient, ContractError, DEFAULT_TTL, MAX_BATCH_SIZE};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -188,5 +188,21 @@ fn bulk_renew_extends_live_alerts() {
     assert!(
         client.get_alert_ids_for_contract(&target).contains(id),
         "contract index must survive bulk renewal"
+    );
+}
+
+/// Issue #380: bulk_renew_ttl must return ContractError::BatchTooLarge when
+/// the batch size exceeds MAX_BATCH_SIZE (50), matching batch_register_alerts.
+#[test]
+fn bulk_renew_ttl_returns_batch_too_large() {
+    let (env, client) = setup();
+    let mut ids = Vec::new(&env);
+    for i in 0..=(MAX_BATCH_SIZE as u64) {
+        ids.push_back(i);
+    }
+    let res = client.try_bulk_renew_ttl(&ids);
+    assert_eq!(
+        res.unwrap_err().unwrap(),
+        ContractError::BatchTooLarge
     );
 }
